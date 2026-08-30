@@ -74,6 +74,22 @@ class Settings:
     # --- Document types supported in MVP ---
     SUPPORTED_DOCUMENT_TYPES: tuple[str, ...] = ("PAN", "GST", "BANK_PROOF")
 
+    # --- Risk scoring (Feature 1) ---
+    # Points added to a merchant's risk score for each type of mismatched
+    # check. Capped at MAX_RISK_SCORE. Weights reflect how serious each
+    # failure type is.
+    RISK_WEIGHTS: dict[str, int] = {
+        "govt_database": 30,
+        "ckyc_records": 20,
+        "automated_verification": 20,
+        "bank_account_validation": 20,
+        "compliance_reviews": 10,
+        "llm_cross_check": 15,
+        "fraud_ring_pan": 40,
+        "fraud_ring_bank": 40,
+    }
+    MAX_RISK_SCORE: int = 100
+
     def validate(self) -> None:
         """Fail fast at startup if required secrets are missing."""
         missing = []

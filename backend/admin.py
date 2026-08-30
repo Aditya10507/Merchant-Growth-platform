@@ -55,6 +55,22 @@ def _normalize_checks(checks: list[dict]) -> list[dict]:
     return checks
 
 
+def _compute_risk_score(mismatched_checks: list[dict]) -> int:
+    """Weighted sum of mismatched checks, capped at MAX_RISK_SCORE.
+
+    check_name values starting with 'llm_cross_check' all map to the flat
+    'llm_cross_check' weight — every inconsistent field adds its own points.
+    """
+    from config import settings
+
+    total = 0
+    for check in mismatched_checks:
+        check_name = check["check_name"]
+        weight_key = "llm_cross_check" if check_name.startswith("llm_cross_check") else check_name
+        total += settings.RISK_WEIGHTS.get(weight_key, 10)
+    return min(total, settings.MAX_RISK_SCORE)
+
+
 def _merchant_to_summary(m: Merchant) -> MerchantSummaryResponse:
     """Maps a Merchant ORM model to its summary response shape."""
     return MerchantSummaryResponse(
@@ -62,6 +78,7 @@ def _merchant_to_summary(m: Merchant) -> MerchantSummaryResponse:
         business_name=m.business_name,
         email=m.email,
         onboarding_status=m.onboarding_status,
+        risk_score=m.risk_score,
         created_at=m.created_at.isoformat(),
     )
 
@@ -69,6 +86,7 @@ def _merchant_to_summary(m: Merchant) -> MerchantSummaryResponse:
 @router.get("/merchants", response_model=list[MerchantSummaryResponse])
 def list_merchants(
     status_filter: Optional[str] = None,
+    sort_by_risk: bool = False,
     db: Session = Depends(get_db),
     _reviewer: Merchant = Depends(require_role("reviewer", "admin")),
 ) -> list[MerchantSummaryResponse]:
@@ -79,7 +97,12 @@ def list_merchants(
     query = db.query(Merchant).filter(Merchant.role == "merchant")
     if status_filter:
         query = query.filter(Merchant.onboarding_status == status_filter)
-    return [_merchant_to_summary(m) for m in query.all()]
+    merchants = query.all()
+    if sort_by_risk:
+        # None (not yet verified) sorts last — an unscored merchant isn't
+        # necessarily low-risk, it just hasn't been checked yet.
+        merchants.sort(key=lambda m: (m.risk_score is None, -(m.risk_score or 0)))
+    return [_merchant_to_summary(m) for m in merchants]
 
 
 @router.get("/merchants/{merchant_id}", response_model=MerchantDetailResponse)
@@ -113,6 +136,7 @@ def get_merchant_detail(
         matched_checks=_normalize_checks(_json.loads(merchant.matched_checks)) if merchant.matched_checks else None,
         mismatched_checks=_normalize_checks(_json.loads(merchant.mismatched_checks)) if merchant.mismatched_checks else None,
         rejection_cause=merchant.rejection_cause,
+        risk_score=merchant.risk_score,
         # Reuse the existing mapper from documents.py to avoid duplicating
         # the Document-to-response mapping logic.
         documents=[documents_module._to_response(d) for d in active_docs],
@@ -197,9 +221,20 @@ def verify_application(
 
     external_breakdown = decision.check_external_sources(db, pan_number, account_number or None)
 
-    # --- Step 4: Merge LLM + external findings into one breakdown ---
-    all_matched = llm_matched + [cm.model_dump() for cm in external_breakdown.matched]
-    all_mismatched = llm_mismatched + [cm.model_dump() for cm in external_breakdown.mismatched]
+    # --- Step 3b: Fraud-ring check (cross-merchant shared identifiers) ---
+    fraud_ring_breakdown = decision.check_shared_identifiers(db, merchant_id, pan_number, account_number or None)
+
+    # --- Step 4: Merge all findings into one breakdown ---
+    all_matched = (
+        llm_matched
+        + [cm.model_dump() for cm in external_breakdown.matched]
+        + [cm.model_dump() for cm in fraud_ring_breakdown.matched]
+    )
+    all_mismatched = (
+        llm_mismatched
+        + [cm.model_dump() for cm in external_breakdown.mismatched]
+        + [cm.model_dump() for cm in fraud_ring_breakdown.mismatched]
+    )
 
     # Ensure matched field is always a bool (not a string from old data)
     for entry in all_matched:
@@ -210,6 +245,7 @@ def verify_application(
     # --- Step 5: Store on the Merchant row ---
     merchant.matched_checks = _json.dumps(all_matched)
     merchant.mismatched_checks = _json.dumps(all_mismatched)
+    merchant.risk_score = _compute_risk_score(all_mismatched)
 
     if all_mismatched:
         merchant.rejection_cause = verify.generate_rejection_cause(all_mismatched)

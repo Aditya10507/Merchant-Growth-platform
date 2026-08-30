@@ -104,8 +104,11 @@ export function restartApplication(): Promise<MerchantStatus> {
 // ---------------------------------------------------------------------------
 
 /** Lists all merchants, optionally filtered by onboarding_status. */
-export function getAdminMerchants(statusFilter?: string): Promise<MerchantSummary[]> {
-  const query = statusFilter ? `?status_filter=${statusFilter}` : "";
+export function getAdminMerchants(statusFilter?: string, sortByRisk?: boolean): Promise<MerchantSummary[]> {
+  const params = new URLSearchParams();
+  if (statusFilter) params.set("status_filter", statusFilter);
+  if (sortByRisk) params.set("sort_by_risk", "true");
+  const query = params.toString() ? `?${params.toString()}` : "";
   return request<MerchantSummary[]>(`/admin/merchants${query}`);
 }
 

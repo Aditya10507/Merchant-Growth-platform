@@ -161,6 +161,11 @@ def _run_ocr(document_id: int, file_path: str, doc_type: str, merchant_id: int) 
         # Step 3: Format matched — store extracted fields and OCR confidence
         document.extracted_fields_json = _json.dumps(fields)
         document.ocr_confidence = confidence
+        # Populate indexed columns for cross-merchant fraud-ring lookups
+        if doc_type == "PAN":
+            document.extracted_pan_number = fields.get("pan_number") or None
+        elif doc_type == "BANK_PROOF":
+            document.extracted_account_number = fields.get("account_number") or None
         document.verification_status = "verifying"
         db.commit()
 

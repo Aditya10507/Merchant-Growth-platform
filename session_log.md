@@ -764,3 +764,77 @@ consider:
 ---
 
 *New sessions will be appended below.*
+
+## Session 10 — Risk Score + Fraud Ring Detection (August 30, 2026)
+
+### What happened
+Implemented two major features:
+
+1. **Feature 1: Risk Score & Explainability** — Weighted 0-100 risk score per merchant
+2. **Feature 2: Fraud Ring Detection** — Cross-merchant shared identifier checks
+
+### Feature 1: Risk Score
+
+**Backend:**
+- Added `RISK_WEIGHTS` to `config.py` (govt_database=30, ckyc=20, auto_verify=20, bank=20, compliance=10, llm=15, fraud_ring=40 each)
+- Added `Merchant.risk_score` column (Integer, nullable)
+- Added `_compute_risk_score()` to `admin.py` — weighted sum capped at 100
+- Wired into `verify_application` — stored after verification
+- Added `sort_by_risk` to `list_merchants` endpoint
+
+**Frontend:**
+- Created `RiskBadge.tsx` — colored pill (unscored/low/medium/high)
+- Created `RiskBreakdown.tsx` — point-by-point risk explanation
+- Updated `AdminPage.tsx` — RiskBadge in list + detail, RiskBreakdown in detail
+
+### Feature 2: Fraud Ring Detection
+
+**Backend:**
+- Added `Document.extracted_pan_number` and `extracted_account_number` (indexed)
+- Updated `documents.py` to populate at OCR time
+- Added `check_shared_identifiers()` to `decision.py`
+- Wired into `verify_application` — merged with other checks
+
+**Frontend:**
+- `RiskBreakdown.tsx` shows fraud-ring findings with ⚠ icon and distinct styling
+
+### Files changed
+- `backend/config.py` — RISK_WEIGHTS, MAX_RISK_SCORE
+- `backend/db.py` — risk_score, extracted_pan_number, extracted_account_number
+- `backend/schemas.py` — risk_score in responses
+- `backend/admin.py` — _compute_risk_score, sort_by_risk, fraud_ring merge
+- `backend/decision.py` — check_shared_identifiers
+- `backend/documents.py` — populate extracted identifiers
+- `frontend/src/types.ts` — risk_score field
+- `frontend/src/constants.ts` — RISK_LEVEL_THRESHOLDS, getRiskLevel()
+- `frontend/src/components/RiskBadge.tsx` — new
+- `frontend/src/components/RiskBreakdown.tsx` — new
+- `frontend/src/pages/AdminPage.tsx` — integrated risk components
+- `frontend/src/api.ts` — sortByRisk param
+
+### Build verification
+- `python -m py_compile *.py`: all clean
+- `npx tsc --noEmit`: 0 errors
+- `npm run build`: ✓ built in 23s
+
+### How to run E2E tests
+```bash
+cd frontend && node e2e_final.cjs
+```
+
+### How to generate a new migration after model changes
+```bash
+cd backend
+alembic revision --autogenerate -m "description of change"
+alembic upgrade head
+```
+
+### Notes for next session
+- Risk weights are duplicated in `config.py` and `RiskBreakdown.tsx` — comment both clearly
+- `risk_score` is null until verification, not 0 (null != 0: unscored vs assessed)
+- Fraud-ring checks query across ALL merchants, not just the current one
+- Only active documents (is_active=True) are compared — restarted apps don't false-positive
+
+---
+
+*New sessions will be appended below.*

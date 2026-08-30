@@ -25,6 +25,8 @@ import { useAuth } from "../AuthContext";
 import { Alert } from "../components/Alert";
 import { Button } from "../components/Button";
 import { InputField } from "../components/InputField";
+import { RiskBadge } from "../components/RiskBadge";
+import { RiskBreakdown } from "../components/RiskBreakdown";
 import { StatusBadge } from "../components/StatusBadge";
 import { VerificationTimeline } from "../components/VerificationTimeline";
 import { STATUS_LABELS } from "../constants";
@@ -255,8 +257,7 @@ function AdminPageBase() {
             {listState.status === "success" && listState.data.length > 0 && (
               <div className="overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm">
                 <table className="w-full text-left text-sm" role="grid">
-                  <thead className="bg-gray-50 text-xs text-gray-500">
-                    <tr>
+                  <thead className="bg-gray-50 text-xs text-gray-500">                        <tr>
                       <th scope="col" className="px-4 py-3 font-medium">
                         Business Name
                       </th>
@@ -265,6 +266,9 @@ function AdminPageBase() {
                       </th>
                       <th scope="col" className="px-4 py-3 font-medium">
                         Status
+                      </th>
+                      <th scope="col" className="px-4 py-3 font-medium">
+                        Risk
                       </th>
                       <th scope="col" className="px-4 py-3 font-medium">
                         Created
@@ -305,6 +309,9 @@ function AdminPageBase() {
                               merchant.onboarding_status as DocumentStatus["verification_status"]
                             }
                           />
+                        </td>
+                        <td className="px-4 py-3">
+                          <RiskBadge score={merchant.risk_score} />
                         </td>
                         <td className="px-4 py-3 text-gray-500">
                           {formatDate(merchant.created_at)}
@@ -461,12 +468,13 @@ function MerchantDetailViewBase({
       <div className="rounded-md bg-gray-50 p-3 text-sm">
         <p className="font-medium text-gray-900">{detail.business_name}</p>
         <p className="text-gray-600">{detail.email}</p>
-        <div className="mt-2">
+        <div className="mt-2 flex items-center gap-2">
           <StatusBadge
             status={
               detail.onboarding_status as DocumentStatus["verification_status"]
             }
           />
+          <RiskBadge score={detail.risk_score} />
         </div>
         {detail.rejection_reason && (
           <p className="mt-2 text-xs text-red-700">
@@ -597,6 +605,16 @@ function MerchantDetailViewBase({
                 checks={detail.mismatched_checks}
                 variant="mismatched"
               />
+            </div>
+          )}
+
+          {/* Risk breakdown — point-by-point explanation */}
+          {detail.mismatched_checks && detail.mismatched_checks.length > 0 && (
+            <div className="mt-3">
+              <p className="mb-1 text-xs font-medium text-gray-700">
+                Risk Score Breakdown:
+              </p>
+              <RiskBreakdown mismatchedChecks={detail.mismatched_checks} />
             </div>
           )}
 

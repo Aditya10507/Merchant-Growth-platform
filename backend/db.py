@@ -65,6 +65,9 @@ class Merchant(Base):
     matched_checks = Column(Text, nullable=True)    # JSON: list[CheckResult]
     mismatched_checks = Column(Text, nullable=True)  # JSON: list[CheckResult]
     rejection_cause = Column(Text, nullable=True)     # auto-generated from mismatched checks
+    # Weighted 0-100 risk score computed at verify-time (see admin.py).
+    # Null until the admin runs verification — null != 0 (unscored vs assessed).
+    risk_score = Column(Integer, nullable=True)
     created_at = Column(DateTime, default=_utcnow)
 
     documents = relationship("Document", back_populates="merchant")
@@ -87,6 +90,10 @@ class Document(Base):
     # history; only active documents count toward the merchant's current
     # application and appear on their dashboard.
     is_active = Column(Boolean, nullable=False, default=True)
+    # Populated at OCR time for PAN and BANK_PROOF documents only (null for
+    # GST). Indexed so cross-merchant fraud-ring lookups are fast.
+    extracted_pan_number = Column(String(20), nullable=True, index=True)
+    extracted_account_number = Column(String(30), nullable=True, index=True)
     created_at = Column(DateTime, default=_utcnow)
     updated_at = Column(DateTime, default=_utcnow, onupdate=_utcnow)
 

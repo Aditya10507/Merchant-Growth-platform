@@ -175,6 +175,71 @@ def check_external_sources(
     return VerificationBreakdown(matched=matched, mismatched=mismatched)
 
 
+def check_shared_identifiers(
+    db: Session, merchant_id: int, pan_number: str, account_number: str | None
+) -> VerificationBreakdown:
+    """
+    Cross-merchant fraud-ring check: does this PAN or bank account number
+    appear on any OTHER merchant's active documents? A shared identifier
+    across unrelated applications is a strong fraud signal.
+
+    Only active documents (is_active=True) are considered, so a
+    restarted application's retired documents don't cause false positives.
+    """
+    from db import Document
+
+    matched: list[CheckResult] = []
+    mismatched: list[CheckResult] = []
+
+    if pan_number:
+        other_pan_merchants = (
+            db.query(Document.merchant_id)
+            .filter(
+                Document.extracted_pan_number == pan_number,
+                Document.merchant_id != merchant_id,
+                Document.is_active == True,
+            )
+            .distinct()
+            .all()
+        )
+        if other_pan_merchants:
+            ids = ", ".join(str(m[0]) for m in other_pan_merchants)
+            mismatched.append(CheckResult(
+                check_name="fraud_ring_pan", document_type="PAN", matched=False,
+                detail=f"This PAN also appears on merchant application(s): {ids}",
+            ))
+        else:
+            matched.append(CheckResult(
+                check_name="fraud_ring_pan", document_type="PAN", matched=True,
+                detail="PAN is not shared with any other application",
+            ))
+
+    if account_number:
+        other_bank_merchants = (
+            db.query(Document.merchant_id)
+            .filter(
+                Document.extracted_account_number == account_number,
+                Document.merchant_id != merchant_id,
+                Document.is_active == True,
+            )
+            .distinct()
+            .all()
+        )
+        if other_bank_merchants:
+            ids = ", ".join(str(m[0]) for m in other_bank_merchants)
+            mismatched.append(CheckResult(
+                check_name="fraud_ring_bank", document_type="BANK_PROOF", matched=False,
+                detail=f"This bank account also appears on merchant application(s): {ids}",
+            ))
+        else:
+            matched.append(CheckResult(
+                check_name="fraud_ring_bank", document_type="BANK_PROOF", matched=True,
+                detail="Bank account is not shared with any other application",
+            ))
+
+    return VerificationBreakdown(matched=matched, mismatched=mismatched)
+
+
 def evaluate(
     ocr_confidence: float,
     llm_result: LlmVerificationResult | None,

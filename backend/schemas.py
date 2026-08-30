@@ -140,6 +140,7 @@ class MerchantSummaryResponse(BaseModel):
     business_name: str
     email: str
     onboarding_status: str
+    risk_score: Optional[int] = None
     created_at: str
 
 
@@ -160,6 +161,7 @@ class MerchantDetailResponse(BaseModel):
     matched_checks: Optional[list[CheckResult]] = None
     mismatched_checks: Optional[list[CheckResult]] = None
     rejection_cause: Optional[str] = None
+    risk_score: Optional[int] = None
     documents: list[DocumentStatusResponse]
     audit_trail: list[AuditLogEntryResponse]
 

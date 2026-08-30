@@ -63,6 +63,7 @@ export interface MerchantSummary {
   business_name: string;
   email: string;
   onboarding_status: string;
+  risk_score: number | null;
   created_at: string;
 }
 
@@ -82,6 +83,7 @@ export interface MerchantDetail {
   matched_checks: CheckResult[] | null;
   mismatched_checks: CheckResult[] | null;
   rejection_cause: string | null;
+  risk_score: number | null;
   documents: DocumentStatus[];
   audit_trail: AuditLogEntry[];
 }

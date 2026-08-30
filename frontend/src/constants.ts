@@ -53,3 +53,13 @@ export const ACTION_LABELS: Record<string, string> = {
   manual_review_resolution: "Reviewer decision",
   expected_outcome: "Expected outcome",
 };
+
+// --- Risk scoring (Feature 1) ---
+export const RISK_LEVEL_THRESHOLDS = { LOW: 30, MEDIUM: 60 } as const;
+
+export function getRiskLevel(score: number | null): "unscored" | "low" | "medium" | "high" {
+  if (score === null) return "unscored";
+  if (score < RISK_LEVEL_THRESHOLDS.LOW) return "low";
+  if (score < RISK_LEVEL_THRESHOLDS.MEDIUM) return "medium";
+  return "high";
+}
