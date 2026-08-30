@@ -1,6 +1,8 @@
 # --- Secrets ---
 .env
 backend/.env
+backend/gen-lang-*.json
+backend/*-service-account.json
 
 # --- Backend (Python) ---
 backend/__pycache__/

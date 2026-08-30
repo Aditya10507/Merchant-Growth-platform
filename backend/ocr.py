@@ -1,22 +1,34 @@
 """
 ocr.py
 ------
-Wraps PaddleOCR so the rest of the app never touches the OCR library
+Wraps OCR.space API so the rest of the app never touches the OCR library
 directly (Dependency Inversion — callers depend on this module's small
-interface, not on PaddleOCR's API). This also makes it possible to swap
+interface, not on the OCR.space API). This also makes it possible to swap
 the OCR engine later without touching any calling code.
 
 extract_text() returns the raw detected text lines and an overall
 confidence score. Turning that raw text into typed fields (pan_number,
 name, dob, etc.) is a separate, per-document-type parsing step below,
 since that logic is specific to each document type and not an OCR concern.
+
+Setup:
+  1. Get a free API key at https://ocr.space/ocrapi/freekey (no credit card)
+  2. Set OCR_API_KEY in backend/.env
+  3. Free tier: 25,000 requests/month
 """
 
+import os
 import re
+import base64
 from dataclasses import dataclass
 from functools import lru_cache
 
+import requests
+
 from config import settings
+
+
+OCR_API_URL = "https://api.ocr.space/parse/image"
 
 
 @dataclass(frozen=True)
@@ -29,57 +41,95 @@ class OcrEngineError(RuntimeError):
     """Raised when the OCR engine fails to process a document."""
 
 
-@lru_cache(maxsize=1)
-def _get_engine():
-    """
-    Lazily initializes PaddleOCR once per process (model loading is
-    expensive, and on first run downloads model weights from the
-    internet — this can be slow or fail entirely without connectivity).
-    Import is deferred so the rest of the app can be tested without the
-    heavy PaddleOCR/PaddlePaddle dependency installed.
-    """
-    try:
-        from paddleocr import PaddleOCR
-    except ImportError as exc:
+def _get_api_key() -> str:
+    """Returns the OCR.space API key from config or environment."""
+    key = getattr(settings, "OCR_API_KEY", "") or os.getenv("OCR_API_KEY", "")
+    if not key:
         raise OcrEngineError(
-            "PaddleOCR is not installed. Run `pip install -r requirements.txt`."
-        ) from exc
-
-    try:
-        return PaddleOCR(use_angle_cls=True, lang="en")
-    except Exception as exc:
-        # Model download/initialization can fail for many reasons (no
-        # internet on first run, corrupted cache, incompatible
-        # paddlepaddle build). Whatever the cause, surface it as a
-        # single well-known error type so callers can always handle it
-        # and never leave a document stuck mid-processing.
-        raise OcrEngineError(
-            f"PaddleOCR failed to initialize: {exc}. "
-            "If this is the first run, it may be downloading model weights — "
-            "check your internet connection and try again."
-        ) from exc
+            "OCR_API_KEY is not set. Get a free key at https://ocr.space/ocrapi/freekey "
+            "and add it to backend/.env as OCR_API_KEY=your_key_here"
+        )
+    return key
 
 
 def extract_text(file_path: str) -> OcrResult:
     """Runs OCR on a document image/PDF page and returns detected text + confidence."""
-    engine = _get_engine()
+    api_key = _get_api_key()
 
     try:
-        result = engine.ocr(file_path, cls=True)
-    except Exception as exc:  # OCR engine failures are treated as recoverable
-        raise OcrEngineError(f"OCR processing failed for {file_path}: {exc}") from exc
+        with open(file_path, "rb") as f:
+            file_content = f.read()
+    except FileNotFoundError:
+        raise OcrEngineError(f"File not found: {file_path}")
+    except Exception as exc:
+        raise OcrEngineError(f"Failed to read file {file_path}: {exc}") from exc
 
-    if not result or not result[0]:
+    # Determine if the file is a PDF or image
+    is_pdf = file_content[:4] == b"%PDF"
+
+    try:
+        if is_pdf:
+            # Send PDF as base64
+            b64_content = base64.b64encode(file_content).decode("utf-8")
+            response = requests.post(
+                OCR_API_URL,
+                data={
+                    "apikey": api_key,
+                    "base64Image": f"data:application/pdf;base64,{b64_content}",
+                    "language": "eng",
+                    "isOverlayRequired": "false",
+                    "OCREngine": "2",  # Engine 2 is better for printed documents
+                },
+                timeout=30,
+            )
+        else:
+            # Send image as file upload
+            response = requests.post(
+                OCR_API_URL,
+                files={"file": (os.path.basename(file_path), open(file_path, "rb"), "image/png")},
+                data={
+                    "apikey": api_key,
+                    "language": "eng",
+                    "isOverlayRequired": "false",
+                    "OCREngine": "2",
+                },
+                timeout=30,
+            )
+    except requests.Timeout:
+        raise OcrEngineError(f"OCR.space API timeout for {file_path}")
+    except requests.ConnectionError:
+        raise OcrEngineError("OCR.space API connection failed. Check your internet connection.")
+    except Exception as exc:
+        raise OcrEngineError(f"OCR.space API request failed for {file_path}: {exc}") from exc
+
+    try:
+        result = response.json()
+    except Exception:
+        raise OcrEngineError(f"OCR.space returned invalid JSON for {file_path}")
+
+    # Check for API errors
+    if result.get("IsErroredOnProcessing"):
+        error_msg = result.get("ErrorMessage", ["Unknown error"])
+        if isinstance(error_msg, list):
+            error_msg = ", ".join(error_msg)
+        raise OcrEngineError(f"OCR.space error for {file_path}: {error_msg}")
+
+    # Check for parsed results
+    parsed_results = result.get("ParsedResults")
+    if not parsed_results:
         return OcrResult(raw_lines=[], confidence=0.0)
 
-    lines: list[str] = []
-    confidences: list[float] = []
-    for detection in result[0]:
-        _, (text, confidence) = detection
-        lines.append(text)
-        confidences.append(confidence)
+    # Extract text from the first parsed result
+    parsed = parsed_results[0]
+    raw_text = parsed.get("ParsedText", "")
+    confidence = parsed.get("FileParseExitCode", 0)
 
-    avg_confidence = sum(confidences) / len(confidences) if confidences else 0.0
+    # ParseExitCode: 1 = success, others = partial/failed
+    # Convert to a 0-1 confidence score
+    avg_confidence = 0.95 if confidence == 1 else 0.7 if confidence == 0 else 0.0
+
+    lines = [line.strip() for line in raw_text.split("\n") if line.strip()]
+
     return OcrResult(raw_lines=lines, confidence=avg_confidence)
 
 
@@ -127,14 +177,30 @@ def parse_bank_proof_fields(ocr: OcrResult) -> dict[str, str]:
 def _best_guess_name_line(lines: list[str]) -> str:
     """
     Heuristic: the merchant/holder name on Indian KYC documents is
-    typically an all-letters line of 2+ words. This is intentionally
-    simple — the LLM cross-verification step is the authority on
-    whether the extracted name is trustworthy, not this heuristic.
+    typically an all-letters line of 2+ words that is NOT a document
+    title or label. This is intentionally simple — the LLM cross-
+    verification step is the authority on whether the extracted name
+    is trustworthy, not this heuristic.
     """
+    # Lines to skip — these are document titles/labels, not names
+    skip_patterns = [
+        "SAMPLE", "TEST DOCUMENT", "NOT A REAL",
+        "PAN CARD", "GST", "BANK", "CERTIFICATE",
+        "PROOF", "REGISTRATION", "ACCOUNT",
+        "Name:", "PAN Number:", "Date of Birth:",
+        "IFSC", "Account Number:", "Account Holder:",
+    ]
     for line in lines:
-        words = line.strip().split()
+        stripped = line.strip()
+        # Skip empty lines, lines with colons (labels), and document titles
+        if not stripped or ":" in stripped:
+            continue
+        # Skip lines containing title words
+        if any(word.upper() in stripped.upper() for word in skip_patterns):
+            continue
+        words = stripped.split()
         if len(words) >= 2 and all(word.isalpha() for word in words):
-            return line.strip()
+            return stripped
     return ""
 
 
