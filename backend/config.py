@@ -1,0 +1,92 @@
+"""
+config.py
+---------
+Single source of truth for every configurable value in the backend.
+Nothing in this project should hardcode a secret, threshold, or magic
+string directly inside business logic — it belongs here instead.
+
+Values are loaded from environment variables (with safe local-dev
+defaults) so the same code works in Docker, CI, or a developer's machine
+without any code changes.
+"""
+
+import os
+from pathlib import Path
+
+# Load .env file if present — only needed for local dev; Docker uses env_file.
+try:
+    from dotenv import load_dotenv
+    load_dotenv(Path(__file__).parent / ".env")
+except ImportError:
+    pass  # python-dotenv not installed; rely on shell env vars
+
+
+class Settings:
+    # --- App ---
+    APP_NAME: str = "Merchant Onboarding Copilot"
+    ENV: str = os.getenv("ENV", "development")
+
+    # --- Database ---
+    # SQLite is used for local/demo simplicity. In Docker, the DB file
+    # lives at /app/db_data/app.db which is backed by a named volume,
+    # so data survives container restarts. Locally it writes next to
+    # this file as app.db.
+    _DB_DIR = Path(os.getenv("DB_DATA_DIR", str(Path(__file__).parent)))
+    DATABASE_URL: str = os.getenv(
+        "DATABASE_URL", f"sqlite:///{_DB_DIR / 'app.db'}"
+    )
+
+    # --- Auth / JWT ---
+    JWT_SECRET_KEY: str = os.getenv("JWT_SECRET_KEY", "")
+    JWT_ALGORITHM: str = "HS256"
+    JWT_EXPIRY_MINUTES: int = int(os.getenv("JWT_EXPIRY_MINUTES", "60"))
+
+    # --- LLM API (OpenAI-compatible: Groq, OpenAI, etc.) ---
+    LLM_API_KEY: str = os.getenv("LLM_API_KEY", "")
+    LLM_BASE_URL: str = os.getenv("LLM_BASE_URL", "https://api.groq.com/openai/v1")
+    LLM_MODEL: str = os.getenv("LLM_MODEL", "qwen/qwen3.8-27b")
+
+    # --- CORS ---
+    ALLOWED_ORIGINS: list[str] = os.getenv(
+        "ALLOWED_ORIGINS", "http://localhost:5173"
+    ).split(",")
+
+    # --- File upload constraints ---
+    MAX_UPLOAD_SIZE_BYTES: int = 5 * 1024 * 1024  # 5 MB
+    ALLOWED_CONTENT_TYPES: tuple[str, ...] = (
+        "image/jpeg",
+        "image/png",
+        "application/pdf",
+    )
+    UPLOAD_DIR: Path = Path(__file__).parent / "uploaded_documents"
+
+    # --- Verification thresholds ---
+    # Anything below this OCR confidence is never auto-approved.
+    MIN_OCR_CONFIDENCE: float = 0.80
+    # Fuzzy-match threshold (0-100) for comparing names across documents.
+    NAME_MATCH_THRESHOLD: int = 85
+
+    # --- Validation patterns ---
+    PAN_REGEX: str = r"^[A-Z]{5}[0-9]{4}[A-Z]{1}$"
+    GST_REGEX: str = r"^\d{2}[A-Z]{5}\d{4}[A-Z]{1}\d[Z]{1}[A-Z\d]{1}$"
+    IFSC_REGEX: str = r"^[A-Z]{4}0[A-Z0-9]{6}$"
+
+    # --- Document types supported in MVP ---
+    SUPPORTED_DOCUMENT_TYPES: tuple[str, ...] = ("PAN", "GST", "BANK_PROOF")
+
+    def validate(self) -> None:
+        """Fail fast at startup if required secrets are missing."""
+        missing = []
+        if not self.JWT_SECRET_KEY:
+            missing.append("JWT_SECRET_KEY")
+        if not self.LLM_API_KEY:
+            missing.append("LLM_API_KEY")
+        if missing:
+            raise RuntimeError(
+                f"Missing required environment variables: {', '.join(missing)}. "
+                "Copy .env.example to .env and fill these in."
+            )
+
+
+settings = Settings()
+settings.UPLOAD_DIR.mkdir(parents=True, exist_ok=True)

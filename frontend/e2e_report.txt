@@ -1,0 +1,70 @@
+═══════════════════════════════════════════════════════════
+MERCHANT ONBOARDING — E2E TEST REPORT
+Generated: 2026-08-30T15:09:59.734Z
+═══════════════════════════════════════════════════════════
+
+Total: 38 | Passed: 32 | Failed: 6 | Rate: 84.2%
+
+── 1. Signup ──
+  PASS Signup: Clean Corp Alpha — 536ms
+  PASS Signup: Clean Corp Beta — 405ms
+  PASS Signup: Clean Corp Gamma — 382ms
+  PASS Signup: Invalid Doc Corp — 604ms
+  PASS Signup: Mismatch Corp A — 777ms
+  PASS Signup: Mismatch Corp B — 595ms
+
+── 2. Login ──
+  PASS Login: Clean Corp Alpha — 544ms
+  PASS Login: Clean Corp Beta — 547ms
+  PASS Login: Clean Corp Gamma — 602ms
+  PASS Login: Invalid Doc Corp — 595ms
+  PASS Login: Mismatch Corp A — 411ms
+  PASS Login: Mismatch Corp B — 364ms
+
+── 3. Upload & OCR ──
+  PASS Upload: Clean Corp Alpha — 3 docs, avg: 30ms
+  PASS Upload: Clean Corp Beta — 3 docs, avg: 34ms
+  PASS Upload: Clean Corp Gamma — 3 docs, avg: 171ms
+  PASS Upload Invalid: Invalid Doc Corp — PAN upload status 201 (expected to fail OCR)
+  PASS Upload: Mismatch Corp A — 3 docs, avg: 40ms
+  PASS Upload: Mismatch Corp B — 3 docs, avg: 408ms
+  PASS OCR Status: Clean Corp Alpha — Expected: submitted, Got: submitted
+  FAIL OCR Status: Clean Corp Beta — Expected: submitted, Got: pending
+  PASS OCR Status: Clean Corp Gamma — Expected: submitted, Got: submitted
+  PASS OCR Status: Invalid Doc Corp — Expected: pending, Got: pending
+  PASS OCR Status: Mismatch Corp A — Expected: submitted, Got: submitted
+  PASS OCR Status: Mismatch Corp B — Expected: submitted, Got: submitted
+
+── 4. Admin Verify/Decide ──
+  PASS Admin Reject: Clean Corp Alpha — Rejected → rejected
+  FAIL Admin: Clean Corp Beta — Cannot verify — status is pending (not submitted)
+  PASS Admin Reject: Clean Corp Gamma — Rejected → rejected
+  PASS Admin: Invalid Doc Corp — Skipped (invalid doc — no admin action needed)
+  PASS Admin Reject: Mismatch Corp A — Rejected → rejected
+  PASS Admin Reject: Mismatch Corp B — Rejected → rejected
+
+── 5. Final Status ──
+  FAIL Final: Clean Corp Alpha — Expected: active, Got: rejected
+  FAIL Final: Clean Corp Beta — Expected: active, Got: pending
+  FAIL Final: Clean Corp Gamma — Expected: active, Got: rejected
+  PASS Final: Invalid Doc Corp — Expected: pending, Got: pending
+  PASS Final: Mismatch Corp A — Expected: rejected, Got: rejected
+  PASS Final: Mismatch Corp B — Expected: rejected, Got: rejected
+
+── 6. UI ──
+  FAIL UI Dashboard: Clean Corp Alpha — No activation message
+  PASS UI Admin Panel — Admin panel loaded ✓
+
+── Latency ──
+  Avg Signup: 550ms
+  Avg Login: 511ms
+  Avg Upload: 137ms
+  Avg Verify: 4041ms
+
+── Merchant Outcomes ──
+  Clean Corp Alpha | Expected: approved | FAIL Expected: active, Got: rejected
+  Clean Corp Beta | Expected: approved | FAIL Expected: active, Got: pending
+  Clean Corp Gamma | Expected: approved | FAIL Expected: active, Got: rejected
+  Invalid Doc Corp | Expected: invalid | PASS Expected: pending, Got: pending
+  Mismatch Corp A | Expected: rejected | PASS Expected: rejected, Got: rejected
+  Mismatch Corp B | Expected: rejected | PASS Expected: rejected, Got: rejected

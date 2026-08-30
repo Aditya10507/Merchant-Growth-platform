@@ -1,0 +1,22 @@
+# --- Secrets ---
+.env
+backend/.env
+
+# --- Backend (Python) ---
+backend/__pycache__/
+backend/**/__pycache__/
+backend/*.pyc
+backend/app.db
+backend/uploaded_documents/
+backend/.venv/
+backend/venv/
+
+# --- Frontend (Node) ---
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+
+# --- OS / editor ---
+.DS_Store
+.vscode/
+*.log

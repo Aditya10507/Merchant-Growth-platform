@@ -1,0 +1,52 @@
+# docker-compose.yml
+#
+# Two services: backend (FastAPI + OCR + LLM verification) and frontend
+# (React + TypeScript, served via Vite dev server for simplicity).
+#
+# The SQLite database lives on a named Docker volume (backend_db_data)
+# at /app/db_data/app.db so it survives `docker-compose down && up`
+# cycles. Seed data (reviewer/admin accounts, synthetic verification
+# sources) is written only when the database is empty — restarting
+# the stack never wipes accounts or uploaded documents.
+#
+# Usage:
+#   1. cp backend/.env.example backend/.env and fill in real values
+#   2. docker-compose up --build
+#   3. To fully reset: docker-compose down -v && docker-compose up --build
+
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    env_file:
+      - ./backend/.env
+    environment:
+      - DB_DATA_DIR=/app/db_data
+      - DATABASE_URL=sqlite:////app/db_data/app.db
+    volumes:
+      # Named volume for the SQLite database — survives restarts
+      - backend_db_data:/app/db_data
+      # Named volume for uploaded document files
+      - backend_uploads:/app/uploaded_documents
+    depends_on:
+      - frontend
+    command: >
+      sh -c "mkdir -p /app/db_data /app/uploaded_documents && python seed.py && uvicorn main:app --host 0.0.0.0 --port 8000"
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "5173:5173"
+    environment:
+      - VITE_API_BASE_URL=http://localhost:8000
+
+volumes:
+  backend_db_data:
+    driver: local
+  backend_uploads:
+    driver: local
