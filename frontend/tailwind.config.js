@@ -3,17 +3,10 @@ export default {
   content: ["./index.html", "./src/**/*.{ts,tsx}"],
   theme: {
     extend: {
-      colors: {
-        // Razorpay-inspired palette (teal/blue). Not their exact brand
-        // tokens — deliberately distinct to avoid trademark/IP issues
-        // while keeping the same visual "family."
-        brand: {
-          50: "#eef7f6",
-          100: "#d6ebe8",
-          500: "#0d7f76",
-          600: "#0a6b63",
-          700: "#08544e",
-        },
+      // No custom colors. Strictly Tailwind's default black/white/gray
+      // scale for this project — do not add any hue-based color here.
+      fontFamily: {
+        sans: ["Inter", "ui-sans-serif", "system-ui", "sans-serif"],
       },
     },
   },

@@ -20,12 +20,40 @@ Setup:
 import os
 import re
 import base64
+import time
+import threading
 from dataclasses import dataclass
 from functools import lru_cache
 
 import requests
 
 from config import settings
+
+logger = __import__("logging").getLogger(__name__)
+
+
+class OcrRateLimiter:
+    """Enforces a minimum delay between OCR API calls to stay within
+    OCR.space's free-tier rate limit (~1 req/sec). Thread-safe."""
+
+    def __init__(self, min_interval: float = 1.0):
+        self._min_interval = min_interval
+        self._last_call: float = 0.0
+        self._lock = threading.Lock()
+
+    def wait_if_needed(self) -> None:
+        """Sleep if necessary to respect the rate limit before the next call."""
+        with self._lock:
+            now = time.time()
+            elapsed = now - self._last_call
+            if elapsed < self._min_interval:
+                time.sleep(self._min_interval - elapsed)
+            self._last_call = time.time()
+
+
+# One rate limiter shared across all background OCR tasks.
+# 1.0s minimum interval keeps us safely within OCR.space's free-tier limit.
+_RATE_LIMITER = OcrRateLimiter(min_interval=1.0)
 
 
 OCR_API_URL = "https://api.ocr.space/parse/image"
@@ -67,34 +95,52 @@ def extract_text(file_path: str) -> OcrResult:
     # Determine if the file is a PDF or image
     is_pdf = file_content[:4] == b"%PDF"
 
-    try:
+    def _call_ocr_space(ocr_engine: str):
+        """Helper to call OCR.space with a specific engine."""
         if is_pdf:
-            # Send PDF as base64
             b64_content = base64.b64encode(file_content).decode("utf-8")
-            response = requests.post(
+            return requests.post(
                 OCR_API_URL,
                 data={
                     "apikey": api_key,
                     "base64Image": f"data:application/pdf;base64,{b64_content}",
                     "language": "eng",
                     "isOverlayRequired": "false",
-                    "OCREngine": "2",  # Engine 2 is better for printed documents
+                    "OCREngine": ocr_engine,
                 },
                 timeout=30,
             )
         else:
-            # Send image as file upload
-            response = requests.post(
+            return requests.post(
                 OCR_API_URL,
                 files={"file": (os.path.basename(file_path), open(file_path, "rb"), "image/png")},
                 data={
                     "apikey": api_key,
                     "language": "eng",
                     "isOverlayRequired": "false",
-                    "OCREngine": "2",
+                    "OCREngine": ocr_engine,
                 },
                 timeout=30,
             )
+
+    # Wait for rate limiter before making the API call
+    _RATE_LIMITER.wait_if_needed()
+
+    try:
+        # Try Engine 2 first (better for printed documents), fallback to Engine 1
+        response = _call_ocr_space("2")
+        try:
+            result_check = response.json()
+            if result_check.get("IsErroredOnProcessing"):
+                error_msg = result_check.get("ErrorMessage", [""])
+                if isinstance(error_msg, list):
+                    error_msg = ", ".join(error_msg)
+                if "too small" in error_msg.lower():
+                    logger.info("Engine 2 failed for %s (%s), falling back to Engine 1", file_path, error_msg)
+                    _RATE_LIMITER.wait_if_needed()
+                    response = _call_ocr_space("1")
+        except Exception:
+            pass  # If we can't parse JSON, just use the original response
     except requests.Timeout:
         raise OcrEngineError(f"OCR.space API timeout for {file_path}")
     except requests.ConnectionError:

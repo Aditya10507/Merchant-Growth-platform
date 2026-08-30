@@ -25,15 +25,15 @@ function InputFieldBase({ label, error, className = "", ...rest }: InputFieldPro
       </label>
       <input
         id={inputId}
-        className={`rounded-md border px-3 py-2 text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600 ${
-          error ? "border-red-500" : "border-gray-300"
+        className={`rounded-md border px-3 py-2 text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-gray-900 ${
+          error ? "border-gray-900" : "border-gray-300"
         } ${className}`}
         aria-invalid={Boolean(error)}
         aria-describedby={error ? errorId : undefined}
         {...rest}
       />
       {error && (
-        <p id={errorId} className="text-sm text-red-600" role="alert">
+        <p id={errorId} className="text-sm text-gray-900 font-medium" role="alert">
           {error}
         </p>
       )}

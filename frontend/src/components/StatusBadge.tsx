@@ -1,34 +1,42 @@
 /**
  * StatusBadge.tsx
  * ---------------
- * Shows a document/merchant's verification status as a color-coded
- * pill. Color is never the only signal — the text label is always
- * present too, per the accessibility requirement that status must not
- * rely on color alone.
+ * Shows a document/merchant's verification status as a monochrome
+ * badge with icon + text label. Fill intensity and icon distinguish
+ * status levels — never hue.
  */
 
 import { memo } from "react";
+import { Clock, AlertTriangle, XCircle, CheckCircle2 } from "lucide-react";
 
 import { STATUS_LABELS } from "../constants";
 import type { VerificationStatus } from "../types";
 
-const STATUS_STYLES: Record<VerificationStatus, string> = {
-  uploaded: "bg-gray-100 text-gray-700",
-  verifying: "bg-blue-100 text-blue-700",
-  invalid_format: "bg-red-100 text-red-800",
-  submitted: "bg-indigo-100 text-indigo-800",
-  verified_matching: "bg-green-100 text-green-800",
-  verified_mismatched: "bg-amber-100 text-amber-800",
-  approved: "bg-green-100 text-green-800",
-  flagged: "bg-amber-100 text-amber-800",
-  rejected: "bg-red-100 text-red-800",
+interface StatusStyle {
+  classes: string;
+  icon: typeof Clock | null;
+}
+
+const STATUS_STYLES: Record<VerificationStatus, StatusStyle> = {
+  uploaded: { classes: "bg-white border border-gray-300 text-gray-700", icon: null },
+  verifying: { classes: "bg-gray-100 border border-gray-300 text-gray-800", icon: Clock },
+  invalid_format: { classes: "bg-white border-2 border-gray-800 text-gray-900", icon: AlertTriangle },
+  submitted: { classes: "bg-gray-100 border border-gray-300 text-gray-800", icon: Clock },
+  verified_matching: { classes: "bg-gray-100 border border-gray-300 text-gray-800", icon: Clock },
+  verified_mismatched: { classes: "bg-white border-2 border-gray-800 text-gray-900", icon: AlertTriangle },
+  approved: { classes: "bg-gray-900 text-white", icon: CheckCircle2 },
+  flagged: { classes: "bg-white border-2 border-gray-800 text-gray-900", icon: AlertTriangle },
+  rejected: { classes: "bg-gray-900 text-white", icon: XCircle },
 };
 
 function StatusBadgeBase({ status }: { status: VerificationStatus }) {
+  const style = STATUS_STYLES[status];
+  const Icon = style.icon;
   return (
     <span
-      className={`inline-block rounded-full px-3 py-1 text-xs font-medium ${STATUS_STYLES[status]}`}
+      className={`inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium ${style.classes}`}
     >
+      {Icon && <Icon className="h-3.5 w-3.5" />}
       {STATUS_LABELS[status] ?? status}
     </span>
   );

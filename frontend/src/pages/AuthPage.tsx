@@ -76,9 +76,9 @@ export function AuthPage() {
   );
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-gray-50 px-4">
-      <div className="w-full max-w-md rounded-xl border border-gray-200 bg-white p-8 shadow-sm">
-        <h1 className="mb-1 text-xl font-medium text-gray-900">Merchant onboarding copilot</h1>
+    <div className="flex min-h-screen items-center justify-center bg-white px-4">
+      <div className="w-full max-w-md rounded-md border border-gray-200 bg-white p-8">
+        <h1 className="mb-1 text-xl font-semibold text-gray-900">Merchant onboarding copilot</h1>
         <p className="mb-6 text-sm text-gray-500">
           {mode === "login" ? "Log in to continue your onboarding." : "Create an account to get started."}
         </p>
@@ -119,7 +119,7 @@ export function AuthPage() {
 
         <button
           type="button"
-          className="mt-4 text-sm text-brand-700 underline-offset-2 hover:underline"
+          className="mt-4 text-sm text-gray-700 underline-offset-2 hover:text-gray-900 hover:underline"
           onClick={() => {
             setMode(mode === "login" ? "signup" : "login");
             setFieldErrors({});
@@ -131,15 +131,15 @@ export function AuthPage() {
 
         {/* Demo accounts for quick access to different roles */}
         {mode === "login" && (
-          <div className="mt-5 rounded-lg border border-gray-200 bg-gray-50 p-4">
-            <p className="mb-2 text-xs font-medium uppercase tracking-wide text-gray-500">
+          <div className="mt-5 rounded-md border border-gray-200 bg-gray-50 p-4">
+            <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500">
               Demo Accounts
             </p>
             <div className="flex flex-col gap-2 text-xs text-gray-600">
               <button
                 type="button"
                 onClick={() => { setEmail("reviewer@example.com"); setPassword("ReviewerPass123"); }}
-                className="rounded-md border border-gray-200 bg-white px-3 py-2 text-left transition-colors hover:border-brand-300 hover:bg-brand-50"
+                className="rounded-md border border-gray-200 bg-white px-3 py-2 text-left transition-colors duration-150 hover:bg-gray-50"
               >
                 <span className="font-medium text-gray-900">Reviewer</span>
                 <span className="ml-2 text-gray-400">reviewer@example.com</span>
@@ -147,7 +147,7 @@ export function AuthPage() {
               <button
                 type="button"
                 onClick={() => { setEmail("admin@example.com"); setPassword("AdminPass123"); }}
-                className="rounded-md border border-gray-200 bg-white px-3 py-2 text-left transition-colors hover:border-brand-300 hover:bg-brand-50"
+                className="rounded-md border border-gray-200 bg-white px-3 py-2 text-left transition-colors duration-150 hover:bg-gray-50"
               >
                 <span className="font-medium text-gray-900">Admin</span>
                 <span className="ml-2 text-gray-400">admin@example.com</span>
@@ -155,7 +155,7 @@ export function AuthPage() {
               <button
                 type="button"
                 onClick={() => { setEmail("speed@test.com"); setPassword("TestPass123"); }}
-                className="rounded-md border border-gray-200 bg-white px-3 py-2 text-left transition-colors hover:border-brand-300 hover:bg-brand-50"
+                className="rounded-md border border-gray-200 bg-white px-3 py-2 text-left transition-colors duration-150 hover:bg-gray-50"
               >
                 <span className="font-medium text-gray-900">Merchant</span>
                 <span className="ml-2 text-gray-400">speed@test.com</span>

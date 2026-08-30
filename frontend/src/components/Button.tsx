@@ -22,10 +22,10 @@ function ButtonBase({
   ...rest
 }: ButtonProps) {
   const base =
-    "inline-flex items-center justify-center rounded-md px-4 py-2 text-sm font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60";
+    "inline-flex items-center justify-center rounded-md px-4 py-2 text-sm font-medium transition-colors duration-150 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60";
   const variants: Record<NonNullable<ButtonProps["variant"]>, string> = {
-    primary: "bg-brand-600 text-white hover:bg-brand-700 focus-visible:ring-brand-600",
-    secondary: "bg-white text-brand-700 border border-brand-600 hover:bg-brand-50 focus-visible:ring-brand-600",
+    primary: "bg-gray-900 text-white hover:bg-black focus-visible:ring-gray-900",
+    secondary: "bg-white text-gray-900 border border-gray-300 hover:bg-gray-50 focus-visible:ring-gray-900",
   };
 
   return (
@@ -40,7 +40,4 @@ function ButtonBase({
   );
 }
 
-// memo() prevents this component from re-rendering when parent state
-// changes but this button's own props haven't — relevant here since
-// forms re-render on every keystroke.
 export const Button = memo(ButtonBase);
