@@ -9,17 +9,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Python dependencies first (layer caching — only re-runs when
-# requirements.txt changes, not on every code edit)
-COPY requirements.txt .
+# Copy backend files and test dataset into the container
+COPY backend/requirements.txt .
+COPY backend/ .
+COPY test_documents/ /app/test_documents/
+
+# Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Create directories that will be backed by Docker volumes so they
-# survive container restarts even when the image is rebuilt.
+# Create directories that will be backed by Docker volumes
 RUN mkdir -p /app/db_data /app/uploaded_documents
-
-# Copy the rest of the application code
-COPY . .
 
 EXPOSE 8000
 
