@@ -1029,3 +1029,108 @@ Screenshots saved to: `backend/test_screenshots/`
 - Docker Compose stack is fully operational
 - Test documents used: `test_documents/test_documents/UJALK5542W/` (clean) and `test_documents/test_documents/VDAWP9860F/` (mismatch)
 - GitHub pushed to `https://github.com/Aditya10507/Merchant-Growth-platform.git` (commit `f9f1685`)
+
+---
+
+## Session 13 — Render + Vercel Deployment (August 31, 2026)
+
+### What happened
+Deployed the full stack to production:
+- **Frontend** on Vercel (React + TypeScript + Vite)
+- **Backend** on Render (FastAPI + PostgreSQL)
+- **Database** on Render PostgreSQL (free tier)
+
+### Pre-deployment analysis
+Evaluated deployment compatibility by reading all `.md` files (PRD, Architecture, UI/UX, Development Plan, KNOWLEDGE.md, AGENT_INSTRUCTIONS.md, session_log.md) and all config/infrastructure files. Identified 4 critical issues that needed fixing before deployment:
+
+1. **SQLite is ephemeral on Render** — database wiped on every restart/deploy. Fixed by switching to Render PostgreSQL.
+2. **Database seeding only ran in Docker CMD** — `seed.py` was only called in `backend/Dockerfile`'s `CMD`. On Render (non-Docker or different CMD), test data never gets created. Fixed by adding `seed.main()` to `main.py`'s startup lifespan.
+3. **Alembic migration conflict with `init_db()`** — `init_db()` creates all tables from ORM models, then Alembic's migrations tried to add the same columns, causing `DuplicateColumn` errors on PostgreSQL. Fixed by detecting fresh databases and stamping Alembic at head instead of running migrations.
+4. **Dockerfile assumed `./backend` as build context** — `COPY requirements.txt .` failed when Render used the repo root as Docker context. Fixed by updating COPY paths to reference `backend/` and `test_documents/` relative to repo root.
+
+### Files changed
+
+| File | Change |
+|---|---|
+| `backend/requirements.txt` | Added `psycopg2-binary>=2.9.9` for PostgreSQL support |
+| `backend/main.py` | Added `import seed`, `seed.main()` on startup, Alembic fresh-DB detection (stamp vs upgrade), test dataset download endpoint (`/test-dataset/download`) |
+| `backend/.env.example` | Rewritten with Render deployment variable documentation |
+| `backend/.env` | Connected to Render PostgreSQL (external URL with `?sslmode=require`) |
+| `backend/Dockerfile` | Fixed COPY paths to work with repo root as Docker context (`COPY backend/requirements.txt .`, `COPY backend/ .`, `COPY test_documents/ /app/test_documents/`) |
+| `backend/config.py` | Added `TEST_DATASET_DIR` setting for test dataset download endpoint |
+| `frontend/src/constants.ts` | Added `TEST_DATASET_URL` constant |
+| `frontend/src/pages/AuthPage.tsx` | Added test dataset download button (Download icon from lucide-react) |
+| `render.yaml` | **New** — Render Blueprint for one-click deployment (web service + PostgreSQL) |
+
+### Deployment details
+
+**Backend (Render):**
+- URL: `https://merchant-growth-platform-1.onrender.com`
+- Health check: `https://merchant-growth-platform-1.onrender.com/health` → `{"status": "ok"}`
+- API docs: `https://merchant-growth-platform-1.onrender.com/docs`
+- Runtime: Python 3.11-slim (Docker)
+- Database: Render PostgreSQL (`merchant_onboarding_9ohr`)
+- Free tier: spins down after 15 min inactivity (~30-60s cold start)
+
+**Frontend (Vercel):**
+- URL: `https://merchant-onboarding-copilot.vercel.app`
+- Build: Vite (`npm run build` → `dist/`)
+- Root directory: `frontend`
+- Environment variable: `VITE_API_BASE_URL=https://merchant-growth-platform-1.onrender.com`
+
+**Database (Render PostgreSQL):**
+- External URL: `postgresql://merchant_onboarding_9ohr_user:...@dpg-daarrau7bikc73for1s0-a.oregon-postgres.render.com/merchant_onboarding_9ohr?sslmode=require`
+- Schema: initialized via `init_db()` (ORM models) + Alembic stamp at head
+- Seeded: 27 merchants (2 admin/reviewer + 15 clean + 10 mismatch), all 5 verification tables, 25 audit logs
+
+### Seed data on PostgreSQL
+```
+merchants:              27 rows
+audit_logs:             25 rows
+govt_database:          30 rows
+ckyc_records:           20 rows
+automated_verification: 30 rows
+bank_account_validation:20 rows
+compliance_reviews:      5 rows
+```
+
+### Key environment variables (Render)
+```
+DATABASE_URL=postgresql://...@...oregon-postgres.render.com/merchant_onboarding_9ohr?sslmode=require
+JWT_SECRET_KEY=4ced0b9468246a40317fb42ce3256bbb3f8132e669b0531208ad5ccc9297e7f1
+LLM_API_KEY=gsk_...(Groq key)
+LLM_BASE_URL=https://api.groq.com/openai/v1
+LLM_MODEL=qwen/qwen3.8-27b
+OCR_API_KEY=K81761733488957
+ALLOWED_ORIGINS=https://merchant-onboarding-copilot.vercel.app
+PYTHON_VERSION=3.11
+```
+
+### Build verification
+- `python -m py_compile *.py`: all files compile cleanly
+- `tsc --noEmit`: 0 errors
+- `npm run build`: ✓ built successfully
+- Render health check: OK
+- PostgreSQL connection: verified from local machine
+
+### Deployment issues encountered and fixed
+1. **`COPY requirements.txt .` not found** — Docker context was repo root, not `./backend`. Fixed by updating Dockerfile COPY paths.
+2. **Alembic `DuplicateColumn` on PostgreSQL** — `init_db()` already created all columns from ORM models, then Alembic tried to add them again. Fixed by detecting fresh DB and stamping Alembic at head.
+3. **Seed script skipped** — `seed.main()` checks `Merchant.count() > 0` and skips. Only reviewer/admin accounts existed, test merchants weren't created. Fixed by calling `seed_test_merchants()` directly, then adding `seed.main()` to `main.py` startup (idempotent).
+4. **Vercel deploying from repo root** — Root directory wasn't set to `frontend`. Fixed in Vercel project settings.
+
+### Git commits
+- `8f8f3c3` — Add Render/Vercel deployment support and PostgreSQL compatibility
+- `81035a4` — Fix Dockerfile to work with repo root as build context
+
+### Notes for next session
+- Frontend deployed on Vercel, backend on Render, PostgreSQL on Render
+- `ALLOWED_ORIGINS` on Render must include the Vercel URL for CORS to work
+- Test dataset download available at `https://merchant-growth-platform-1.onrender.com/test-dataset/download`
+- Render free tier spins down after 15 min — first request takes ~30-60s to wake up
+- Render PostgreSQL free tier expires after 90 days
+- For future schema changes: run `alembic revision --autogenerate -m "..."` locally, push to GitHub, Render auto-redeploys with `alembic upgrade head`
+
+---
+
+*New sessions will be appended below.*
