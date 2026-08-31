@@ -12,7 +12,8 @@ import { useAuth } from "../AuthContext";
 import { Alert } from "../components/Alert";
 import { Button } from "../components/Button";
 import { InputField } from "../components/InputField";
-import { PASSWORD_MIN_LENGTH } from "../constants";
+import { Download } from "lucide-react";
+import { PASSWORD_MIN_LENGTH, TEST_DATASET_URL } from "../constants";
 
 type Mode = "login" | "signup";
 
@@ -164,6 +165,24 @@ export function AuthPage() {
             <p className="mt-2 text-[10px] text-gray-400">Click to auto-fill credentials, then press Log in.</p>
           </div>
         )}
+
+        {/* Test dataset download — lets judges verify the system independently */}
+        <div className="mt-5 rounded-md border border-gray-200 bg-gray-50 p-4">
+          <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500">
+            Test Dataset
+          </p>
+          <p className="mb-3 text-xs text-gray-600">
+            Download the test dataset for testing
+          </p>
+          <a
+            href={TEST_DATASET_URL}
+            download="test_dataset.zip"
+            className="inline-flex items-center gap-2 rounded-md bg-gray-900 px-4 py-2 text-sm font-medium text-white transition-colors duration-150 hover:bg-black"
+          >
+            <Download className="h-4 w-4" />
+            Download
+          </a>
+        </div>
       </div>
     </div>
   );

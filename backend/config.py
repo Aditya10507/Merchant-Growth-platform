@@ -60,6 +60,12 @@ class Settings:
     )
     UPLOAD_DIR: Path = Path(__file__).parent / "uploaded_documents"
 
+    # --- Test dataset ---
+    # Directory containing the synthetic test documents (PAN, GST, Bank
+    # proof images + summary.csv) that judges can download from the
+    # landing page to independently verify the system.
+    TEST_DATASET_DIR: Path = Path(__file__).parent.parent / "test_documents" / "test_documents"
+
     # --- Verification thresholds ---
     # Anything below this OCR confidence is never auto-approved.
     MIN_OCR_CONFIDENCE: float = 0.80

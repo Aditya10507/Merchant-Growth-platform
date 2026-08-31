@@ -11,6 +11,9 @@ import type { DocumentType } from "./types";
 export const API_BASE_URL: string =
   import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
 
+/** URL for downloading the synthetic test dataset (no auth required). */
+export const TEST_DATASET_URL: string = `${API_BASE_URL}/test-dataset/download`;
+
 export const MAX_UPLOAD_SIZE_BYTES = 5 * 1024 * 1024; // 5 MB, mirrors backend limit
 
 /** Human-readable version of the max upload size for display in the UI. */

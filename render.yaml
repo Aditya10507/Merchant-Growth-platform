@@ -1,0 +1,38 @@
+# render.yaml
+#
+# One-click deploy for the Merchant Onboarding Copilot backend.
+# Usage: Connect your GitHub repo on Render → "New" → "Blueprint" → select this file.
+#
+# Or deploy manually (see README below).
+
+services:
+  - type: web
+    name: merchant-onboarding-backend
+    runtime: python
+    plan: free
+    buildCommand: pip install -r backend/requirements.txt
+    startCommand: cd backend && python seed.py && uvicorn main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: DATABASE_URL
+        sync: false  # Must be set manually — linked to the PostgreSQL service below
+      - key: JWT_SECRET_KEY
+        generateValue: true
+      - key: LLM_API_KEY
+        sync: false  # Set your Groq API key
+      - key: LLM_BASE_URL
+        value: https://api.groq.com/openai/v1
+      - key: LLM_MODEL
+        value: qwen/qwen3.8-27b
+      - key: OCR_API_KEY
+        sync: false  # Set your OCR.space API key
+      - key: ALLOWED_ORIGINS
+        sync: false  # Set to your Vercel URL after frontend deploy
+      - key: PYTHON_VERSION
+        value: "3.11"
+    healthCheckPath: /health
+
+  - type: postgres
+    name: merchant-onboarding-db
+    plan: free
+    databaseName: merchant_onboarding
+    ipAllowList: []  # No external access — only from this service

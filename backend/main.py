@@ -10,19 +10,25 @@ Run locally with:
     uvicorn main:app --reload --port 8000
 """
 
+import io
 import logging
+import zipfile
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from alembic import command as alembic_command
 from alembic.config import Config as AlembicConfig
+import seed
+from sqlalchemy import inspect
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 
 import admin
 import auth
 import documents
 from config import settings
-from db import init_db
+from db import engine, init_db
 
 logging.basicConfig(
     level=logging.INFO,
@@ -35,14 +41,28 @@ async def lifespan(app: FastAPI):
     settings.validate()
     # 1. Ensure base tables exist (idempotent — only creates missing tables).
     init_db()
-    # 2. Run Alembic migrations to apply any schema changes since last deploy.
+    # 2. Run Alembic migrations — but on a fresh database, init_db() already
+    #    created everything from ORM models, so stamp Alembic at head instead
+    #    of running migrations (which would fail on already-existing columns).
     try:
         alembic_cfg = AlembicConfig("alembic.ini")
         alembic_cfg.set_main_option("sqlalchemy.url", settings.DATABASE_URL)
-        alembic_command.upgrade(alembic_cfg, "head")
-        logging.getLogger("main").info("Alembic migrations applied successfully.")
+        inspector = inspect(engine)
+        has_alembic_table = "alembic_version" in inspector.get_table_names()
+        if not has_alembic_table:
+            # Fresh database — init_db() already created the schema, just stamp
+            alembic_command.stamp(alembic_cfg, "head")
+            logging.getLogger("main").info("Fresh database detected — Alembic stamped at head.")
+        else:
+            alembic_command.upgrade(alembic_cfg, "head")
+            logging.getLogger("main").info("Alembic migrations applied successfully.")
     except Exception:
         logging.getLogger("main").exception("Alembic migration failed — continuing with existing schema.")
+    # 3. Seed database if empty (idempotent — safe to call on every start)
+    try:
+        seed.main()
+    except Exception:
+        logging.getLogger("main").exception("Database seeding failed — continuing without seed data.")
     # Ensure the upload directory exists before any requests
     settings.UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
     yield
@@ -67,3 +87,41 @@ app.include_router(admin.router)
 def health_check() -> dict[str, str]:
     """Basic liveness check used by Docker Compose and manual testing."""
     return {"status": "ok", "service": settings.APP_NAME}
+
+
+# ---------------------------------------------------------------------------
+# Test dataset download — serves the synthetic test documents as a zip file
+# so judges and visitors can independently verify the system's accuracy.
+# No authentication required.
+# ---------------------------------------------------------------------------
+
+def _stream_zip(dataset_dir: Path):
+    """Yields zip file chunks for streaming response. Walks the dataset
+    directory and adds every file (images + summary.csv) to the archive."""
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for file_path in sorted(dataset_dir.rglob("*")):
+            if file_path.is_file():
+                arcname = str(file_path.relative_to(dataset_dir.parent))
+                zf.write(file_path, arcname)
+    buf.seek(0)
+    yield buf.read()
+
+
+@app.get("/test-dataset/download", tags=["dataset"])
+def download_test_dataset():
+    """Streams the synthetic test dataset as a zip file.
+
+    Contains 50 merchant directories (PAN/GST/Bank proof images) and
+    a summary.csv with expected outcomes. Accessible without auth so
+    judges can independently evaluate the system.
+    """
+    dataset_dir = settings.TEST_DATASET_DIR
+    if not dataset_dir.is_dir():
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="Test dataset not found on this server")
+    return StreamingResponse(
+        _stream_zip(dataset_dir),
+        media_type="application/zip",
+        headers={"Content-Disposition": 'attachment; filename="test_dataset.zip"'},
+    )
