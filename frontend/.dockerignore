@@ -1,0 +1,10 @@
+node_modules
+dist
+.git
+.gitignore
+*.md
+Dockerfile
+.dockerignore
+e2e_final.cjs
+e2e_report.txt
+tsconfig.tsbuildinfo

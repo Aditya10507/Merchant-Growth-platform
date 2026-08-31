@@ -22,3 +22,9 @@ frontend/.vite/
 .DS_Store
 .vscode/
 *.log
+
+# --- Test artifacts ---
+backend/test_report.txt
+backend/test_screenshots/
+backend/merchant_onboarding.db
+frontend/tsconfig.tsbuildinfo

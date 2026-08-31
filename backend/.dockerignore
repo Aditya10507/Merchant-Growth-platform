@@ -1,0 +1,17 @@
+__pycache__
+*.pyc
+*.pyo
+.env
+.env.*
+!.env.example
+*.db
+*.sqlite
+alembic/versions/*.pyc
+uploaded_documents/
+test_documents/
+test_e2e.py
+*.md
+.git
+.gitignore
+Dockerfile
+.dockerignore

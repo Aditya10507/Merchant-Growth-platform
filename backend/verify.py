@@ -222,11 +222,51 @@ def generate_rejection_cause(mismatched_checks: list[dict[str, str]]) -> str:
         return _fallback_cause(mismatched_checks)
 
 
+_DOC_TYPE_NAMES: dict[str, str] = {
+    "PAN": "PAN card",
+    "GST": "GST certificate",
+    "BANK_PROOF": "bank proof document",
+}
+
+
 def _fallback_cause(mismatched_checks: list[dict[str, str]]) -> str:
-    """Simple plain-text fallback when the LLM call fails."""
-    parts = []
+    """User-friendly fallback when the LLM call fails.
+
+    Groups mismatches by document type and produces one short sentence
+    per affected document, e.g.:
+      "Your PAN card could not be verified against government records.
+       Your bank proof document was not found in our validation system."
+    """
+    from collections import defaultdict
+
+    by_doc: dict[str, list[str]] = defaultdict(list)
     for check in mismatched_checks:
         doc = check.get("document_type", "document")
         detail = check.get("detail", "verification failed")
-        parts.append(f"{doc}: {detail}")
-    return "; ".join(parts)
+        by_doc[doc].append(detail)
+
+    parts: list[str] = []
+    for doc_type, details in by_doc.items():
+        friendly_name = _DOC_TYPE_NAMES.get(doc_type, doc_type.replace("_", " ").lower())
+        # Pick the most meaningful detail — prefer "not found" over raw
+        # internal messages, and drop fraud-ring details (those are
+        # admin-facing, not merchant-facing).
+        merchant_details = [
+            d for d in details
+            if "appears on merchant" not in d
+        ]
+        if not merchant_details:
+            continue
+        # Summarise: if the first detail says "not found", say it plainly
+        first = merchant_details[0]
+        if "not found" in first.lower() or "no " in first.lower():
+            parts.append(f"Your {friendly_name} could not be verified.")
+        elif "failed" in first.lower() or "invalid" in first.lower() or "flagged" in first.lower():
+            parts.append(f"Your {friendly_name} did not pass verification.")
+        else:
+            parts.append(f"Your {friendly_name} could not be verified.")
+
+    if not parts:
+        return "Your application could not be verified. Please check your documents and try again."
+
+    return " ".join(parts) + " Please review your documents and reapply."

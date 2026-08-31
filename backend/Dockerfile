@@ -1,9 +1,13 @@
 # Backend Dockerfile
-# Uses Google Cloud Vision for OCR (no heavy PaddleOCR dependencies).
-# Image is much smaller and builds faster than before.
+# OCR via OCR.space API (lightweight — no heavy local OCR dependencies).
 FROM python:3.11-slim
 
 WORKDIR /app
+
+# Install system dependencies needed by some Python packages
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
 
 # Install Python dependencies first (layer caching — only re-runs when
 # requirements.txt changes, not on every code edit)
@@ -19,4 +23,5 @@ COPY . .
 
 EXPOSE 8000
 
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+# Seed + run. Seed is idempotent (skips if DB already populated).
+CMD ["sh", "-c", "python seed.py && uvicorn main:app --host 0.0.0.0 --port 8000"]

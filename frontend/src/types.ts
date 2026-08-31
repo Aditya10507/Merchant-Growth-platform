@@ -12,10 +12,12 @@ export type VerificationStatus =
   | "uploaded"
   | "verifying"
   | "invalid_format"
+  | "pending"
   | "submitted"
   | "verified_matching"
   | "verified_mismatched"
   | "approved"
+  | "active"
   | "flagged"
   | "rejected";
 

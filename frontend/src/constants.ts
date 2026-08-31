@@ -33,10 +33,12 @@ export const STATUS_LABELS: Record<string, string> = {
   uploaded: "Uploaded",
   verifying: "Verifying",
   invalid_format: "Invalid document",
+  pending: "Pending",
   submitted: "Awaiting verification",
   verified_matching: "Verified - matches",
   verified_mismatched: "Verified - mismatch found",
   approved: "Approved",
+  active: "Active",
   flagged: "Needs review",
   rejected: "Rejected",
 };
