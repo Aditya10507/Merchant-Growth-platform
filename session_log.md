@@ -951,20 +951,20 @@ Two major tasks completed:
 | A4c | Upload Bank proof | PASS |
 | A5 | Merchant status after OCR (submitted, 3 docs) | PASS |
 | A6 | Admin login | PASS |
-| A7 | Admin merchant list (27 merchants) | PASS |
+| A7 | Admin merchant list (31 merchants) | PASS |
 | A7b | Filter by submitted status | PASS |
 | A7c | Sort by risk score | PASS |
-| A8 | Admin merchant detail | FAIL (audit trail timing) |
-| A9 | Admin verify application (verified_mismatched, risk=90) | PASS |
+| A8 | Admin merchant detail (docs=3) | PASS |
+| A9 | Admin verify application (verified_mismatched, risk=100) | PASS |
 | A10 | Admin approve → active | PASS |
 | A11 | Merchant sees active status | PASS |
 | A12 | Duplicate signup → 409 | PASS |
 | A13 | Wrong password → 401 | PASS |
 | A14 | Merchant → admin endpoint → 403 | PASS |
 | A15 | Invalid content type → 400 | PASS |
-| A16 | Batch test (accuracy=92.59%) | PASS |
+| A16 | Batch test (accuracy=80.65%) | PASS |
 | A17 | Restart application flow (reject → restart → pending) | PASS |
-| A18 | Mismatch verify (4 mismatches, risk=90) | PASS |
+| A18 | Mismatch verify (6 mismatches, risk=100) | PASS |
 | A18b | Admin reject mismatched → rejected | PASS |
 
 **Group B — UI Tests (9 tests, Playwright):**
@@ -972,10 +972,10 @@ Two major tasks completed:
 |------|-------------|--------|
 | B1 | Frontend loads | PASS |
 | B2 | Demo account quick-fill buttons (3 found) | PASS |
-| B3 | Admin login via UI | FAIL (timing) |
-| B4 | Admin merchant list | FAIL (dependent on B3) |
-| B5 | Filter tabs | FAIL (dependent on B3) |
-| B6 | Merchant detail panel | FAIL (dependent on B3) |
+| B3 | Admin login via UI | PASS |
+| B4 | Admin merchant list (33 rows) | PASS |
+| B5 | Filter tabs (7 tabs) | PASS |
+| B6 | Merchant detail panel | PASS |
 | B7 | Merchant login → dashboard | PASS |
 | B8 | Dashboard state (active) | PASS |
 | B9 | Logout → auth page | PASS |
@@ -984,22 +984,34 @@ Two major tasks completed:
 
 ```
 Total:   32
-Passed:  27 (84.4%)
-Failed:  5
+Passed:  32 (100%)
+Failed:  0
 Skipped: 0
 ```
 
-**Failures explained:**
-- A8: Admin merchant detail shows 0 audit trail entries — appears to be a timing issue where the admin client's auth token doesn't carry over correctly between rapid sequential requests. The API itself returns audit entries correctly (verified manually).
-- B3-B6: Admin panel UI tests fail because the Playwright admin login flow doesn't complete within the timeout. The demo quick-fill button works (B2 passes) but the subsequent form submission + redirect to admin panel takes longer than expected in headless mode. All 4 failures cascade from B3.
+### Bug Fixes (found during testing)
+
+**Bug 1: StatusBadge crash — admin panel invisible (B3-B6)**
+- Root cause: `StatusBadge.tsx` uses `Record<VerificationStatus, StatusStyle>` lookup. Two statuses (`"active"` and `"pending"`) existed in the database but were missing from the TypeScript type and style map. When the admin panel rendered a merchant with these statuses, `STATUS_STYLES[status]` returned `undefined`, and `style.icon` threw `Cannot read properties of undefined (reading 'icon')`. React's error boundary unmounted the entire admin panel.
+- Fix: Added `"active"` and `"pending"` to `VerificationStatus` type (`types.ts`), `STATUS_STYLES` map (`StatusBadge.tsx`), and `STATUS_LABELS` (`constants.ts`).
+
+**Bug 2: Wrong assertion in A8**
+- Root cause: Test asserted `audit_trail.length > 0` at step A8, but audit entries are only created by `verify_application` (A9) and `decide_application` (A10) — neither had run yet.
+- Fix: Removed the incorrect assertion (audit trail is correctly empty at that point).
+
+**Bug 3: Rejection messages too technical**
+- Root cause: When the LLM call fails, `_fallback_cause()` in `verify.py` joins raw technical details like `"PAN: PAN not found in government database; PAN: No CKYC record found for this PAN; ..."`. This is what the merchant sees on their dashboard.
+- Fix: Rewrote `_fallback_cause()` to group mismatches by document type, map internal names to friendly names ("PAN" → "PAN card"), filter out admin-only fraud-ring details, and produce one short sentence per affected document.
+- Before: `PAN: PAN not found in government database; PAN: No CKYC record found for this PAN; ...`
+- After: `Your PAN card could not be verified. Your bank proof document could not be verified. Please review your documents and reapply.`
 
 **Key findings:**
 - OCR.space processes documents in ~2-4 seconds with the rate limiter
-- LLM cross-verification completes in ~3-5 seconds
-- Full admin verify + decide flow takes ~13-14 seconds
-- Risk scoring works: clean merchants get risk=0, mismatched get risk=90
-- Fraud ring detection produces 4 mismatches for test data
-- Batch test accuracy: 92.59% across 27 merchants
+- LLM cross-verification completes in ~1.5-3 seconds
+- Full admin verify + decide flow takes ~9-10 seconds
+- Risk scoring works: clean merchants get risk=0, mismatched get risk=100
+- Fraud ring detection produces mismatches for test data
+- Batch test accuracy: 80.65% across 31 merchants
 - All security checks work: duplicate signup (409), wrong password (401), role enforcement (403)
 
 ### How to run
@@ -1013,7 +1025,7 @@ Report saved to: `backend/test_report.txt`
 Screenshots saved to: `backend/test_screenshots/`
 
 ### Notes for next session
-- 5 failing tests are non-critical (1 API timing, 4 cascading UI timing)
-- All core business logic tests pass (27/32)
+- All 32 tests pass (100%)
 - Docker Compose stack is fully operational
 - Test documents used: `test_documents/test_documents/UJALK5542W/` (clean) and `test_documents/test_documents/VDAWP9860F/` (mismatch)
+- GitHub pushed to `https://github.com/Aditya10507/Merchant-Growth-platform.git` (commit `f9f1685`)
