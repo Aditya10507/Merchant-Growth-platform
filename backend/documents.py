@@ -296,17 +296,16 @@ async def upload_document(
     db.commit()
     db.refresh(document)
 
-    # Schedule OCR processing in a background thread — the endpoint returns
-    # immediately and the frontend sees "verifying" via polling.
-    # Using threading.Thread instead of FastAPI BackgroundTasks because
-    # BackgroundTasks don't survive process suspension on Render free tier.
-    t = threading.Thread(
-        target=_process_document_ocr,
-        args=(document.id, file_path, doc_type, merchant.id),
-        daemon=True,
-    )
-    t.start()
+    # Run OCR synchronously — background threads (BackgroundTasks and
+    # threading.Thread) are killed on Render free tier when the process
+    # is suspended between requests. Synchronous OCR takes 2-5s per
+    # document but is the only reliable approach on Render free tier.
+    logger.info("Starting OCR for document %s (merchant %s, type %s)", document.id, merchant.id, doc_type)
+    _run_ocr(document.id, file_path, doc_type, merchant.id)
+    logger.info("OCR completed for document %s", document.id)
 
+    # Refresh from DB to get the updated status after OCR
+    db.refresh(document)
     return _to_response(document)
 
 
