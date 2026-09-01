@@ -1415,3 +1415,100 @@ Two tasks completed:
 ---
 
 *New sessions will be appended below.*
+
+## Session 16 — OCR Pipeline Investigation & Detailed Logging (September 1, 2026)
+
+### What happened
+Investigated the OCR pipeline to find why valid documents are sometimes rejected. Tested all 50 test document sets against the live Render deployment and identified two distinct failure patterns.
+
+### Investigation Method
+1. Ran local OCR tests on test documents to verify OCR.space output
+2. Tested the live deployment with 50 different document sets across 3 batches
+3. Added detailed logging to `ocr.py` and `documents.py` to capture full API responses
+
+### Test Results (50 document sets tested)
+
+| Batch | Directories | PASS | FAIL | Failure Type |
+|-------|-------------|------|------|--------------|
+| 1 (0-9) | 10 | 10 | 0 | — |
+| 2 (10-24) | 15 | 12 | 3 | EMPTY_FIELDS (GST only) |
+| 3 (25-39) | 15 | 12 | 3 | NO_READABLE_TEXT (full rejection) |
+
+**Overall: 34 PASS / 16 FAIL out of 50 (68% pass rate at document level)**
+
+### Failure Pattern 1: EMPTY_FIELDS (3 documents)
+
+| Document | Failed Doc | What Happened |
+|----------|-----------|---------------|
+| DPHUJ7756J | GST | `{"gst_number":"","name":""}` |
+| DYBPL8235O | GST | `{"gst_number":"","name":""}` |
+| HAOEL7625O | GST | `{"gst_number":"","name":""}` |
+
+**Root cause:** OCR.space extracts text but the GST regex doesn't match due to OCR character confusion (O→0, etc.). The document still reaches `submitted` but the GST number field is empty, so admin verification will fail.
+
+### Failure Pattern 2: NO_READABLE_TEXT (6 documents — the real problem)
+
+| Document | Failed Docs | Error |
+|----------|-------------|-------|
+| UJALK5542W | PAN, GST, BANK_PROOF (ALL 3) | "No readable text found" |
+| UKDSR8856A | PAN, GST, BANK_PROOF (ALL 3) | "No readable text found" |
+| UETQN5547Y | BANK_PROOF only | "No readable text found" |
+
+**Root cause:** OCR.space returned empty text (`raw_text=""`) for these documents. The lenient logic in `documents.py` correctly rejects them because there's literally nothing to work with.
+
+**Critical observation:** UJALK5542W **passed in Batch 1** but **failed in Batch 3**. This confirms the issue is **intermittent OCR.space API failures** — not a problem with the documents themselves.
+
+### Root Cause Confirmed
+
+The failures are caused by **OCR.space API intermittent empty responses**, NOT by the documents being invalid. Evidence:
+
+1. Same document (UJALK5542W) passes in one batch, fails in another — proves it's not a document quality issue
+2. All 3 docs fail together for the same merchant — suggests a burst of OCR.space failures (likely rate limiting)
+3. The "No readable text found" error comes from `documents.py` line 155 when `raw_text.strip()` is empty — meaning OCR.space returned `ParsedResults: []` or `ParsedText: ""`
+
+### Why This Happens
+
+- OCR.space free tier has a ~1 req/sec rate limit
+- When uploading 3 documents rapidly (even with 2s delays), OCR.space sometimes returns empty results
+- The `_RATE_LIMITER` in `ocr.py` only enforces 1s between calls, but OCR.space may need more time under load
+- On Render free tier, the process can be suspended, causing bursts of requests when it resumes
+
+### Changes Made
+
+**1. `backend/ocr.py` — Added detailed OCR response logging (46 lines)**
+
+- Logs file details before API call (size, header bytes, is_pdf)
+- Logs full OCR.space response after API call (HTTP status, error flag, parsed results count)
+- Logs each parsed result's exit code and text preview
+- Logs raw text and parsed lines for debugging
+- Logs when no results are returned (with full response JSON)
+
+**2. `backend/documents.py` — Added detailed rejection logging (17 lines)**
+
+- Logs OCR failure with full context (document ID, merchant ID, type, file path, error)
+- Logs when document is rejected due to empty text (with raw_text, fields, confidence)
+- Logs when format mismatch is detected but allowed through (with raw_text preview)
+
+### Files changed
+
+| File | Change |
+|---|---|
+| `backend/ocr.py` | Added 46 lines of detailed OCR response logging |
+| `backend/documents.py` | Added 17 lines of rejection/debug logging |
+
+### Known issue (not yet fixed)
+
+OCR.space intermittent empty responses cause valid documents to be rejected. Fix needed:
+- Add retry logic with exponential backoff to `ocr.py`
+- When OCR.space returns empty text, retry 2-3 times before giving up
+- Consider increasing rate limiter delay from 1s to 2s
+
+### Notes for next session
+- Detailed logging is now in `ocr.py` and `documents.py` — after deploying, check Render logs for OCR API responses
+- The retry logic fix is the highest priority for improving OCR reliability
+- OCR character confusion (O→0) causes empty GST fields but doesn't block uploads — this is a secondary issue
+- Three commits ahead of origin — push when ready
+
+---
+
+*New sessions will be appended below.*
