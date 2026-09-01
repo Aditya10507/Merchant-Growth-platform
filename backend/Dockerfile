@@ -12,7 +12,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Copy backend files and test dataset into the container
 COPY backend/requirements.txt .
 COPY backend/ .
-COPY test_documents/ /app/test_documents/
+COPY test_documents/test_documents/ /app/test_documents/
 
 # Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt

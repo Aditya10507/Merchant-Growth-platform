@@ -116,10 +116,29 @@ def download_test_dataset():
     a summary.csv with expected outcomes. Accessible without auth so
     judges can independently evaluate the system.
     """
+    # Check multiple possible paths for the test dataset
     dataset_dir = settings.TEST_DATASET_DIR
+    
+    # Fallback paths if the configured path doesn't exist
+    fallback_paths = [
+        Path("/app/test_documents"),
+        Path(__file__).parent / "test_documents" / "test_documents",
+        Path(__file__).parent.parent / "test_documents" / "test_documents",
+    ]
+    
+    if not dataset_dir.is_dir():
+        for fallback in fallback_paths:
+            if fallback.is_dir():
+                dataset_dir = fallback
+                break
+    
     if not dataset_dir.is_dir():
         from fastapi import HTTPException
-        raise HTTPException(status_code=404, detail="Test dataset not found on this server")
+        raise HTTPException(
+            status_code=404, 
+            detail="Test dataset not found on this server. Please contact support."
+        )
+    
     return StreamingResponse(
         _stream_zip(dataset_dir),
         media_type="application/zip",

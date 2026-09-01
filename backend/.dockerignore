@@ -8,7 +8,6 @@ __pycache__
 *.sqlite
 alembic/versions/*.pyc
 uploaded_documents/
-test_documents/
 test_e2e.py
 *.md
 .git

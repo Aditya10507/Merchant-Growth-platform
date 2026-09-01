@@ -27,6 +27,8 @@ services:
         sync: false  # Set your OCR.space API key
       - key: ALLOWED_ORIGINS
         sync: false  # Set to your Vercel URL after frontend deploy
+      - key: TEST_DATASET_DIR
+        value: /app/test_documents
       - key: PYTHON_VERSION
         value: "3.11"
     healthCheckPath: /health

@@ -67,7 +67,11 @@ class Settings:
     # Directory containing the synthetic test documents (PAN, GST, Bank
     # proof images + summary.csv) that judges can download from the
     # landing page to independently verify the system.
-    TEST_DATASET_DIR: Path = Path(__file__).parent.parent / "test_documents" / "test_documents"
+    # On Render/Docker, set TEST_DATASET_DIR env var to /app/test_documents
+    TEST_DATASET_DIR: Path = Path(os.getenv(
+        "TEST_DATASET_DIR",
+        str(Path(__file__).parent.parent / "test_documents" / "test_documents")
+    ))
 
     # --- Verification thresholds ---
     # Anything below this OCR confidence is never auto-approved.
