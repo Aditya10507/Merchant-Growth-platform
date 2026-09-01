@@ -28,7 +28,7 @@ import threading
 import uuid
 from pathlib import Path
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, status
 from sqlalchemy.orm import Session
 
 from auth import get_current_merchant
@@ -246,20 +246,22 @@ def _to_response(document: Document) -> DocumentStatusResponse:
 async def upload_document(
     doc_type: str,
     file: UploadFile,
-    background_tasks: BackgroundTasks,
     merchant: Merchant = Depends(get_current_merchant),
     db: Session = Depends(get_db),
 ) -> DocumentStatusResponse:
     """
     Upload endpoint that returns immediately. The heavy OCR processing
-    runs in a FastAPI BackgroundTask so the frontend never times out.
+    runs in a background thread so the frontend never times out.
+    Using threading.Thread instead of FastAPI BackgroundTasks because
+    BackgroundTasks are unreliable on Render free tier (the process can
+    be suspended between requests, killing pending background tasks).
 
     Flow:
       1. Validate inputs (fast, synchronous)
       2. Save file to disk (fast, synchronous)
       3. Create document record with status "verifying" (fast, synchronous)
       4. Return response immediately (< 1 second total)
-      5. Background: run OCR → format check → store fields → trigger verification
+      5. Background thread: run OCR → format check → store fields → trigger verification
     """
     # Block uploads into a rejected application — merchant must restart first.
     if merchant.onboarding_status == "rejected":
@@ -294,9 +296,16 @@ async def upload_document(
     db.commit()
     db.refresh(document)
 
-    # Schedule OCR processing as a background task — the endpoint returns
+    # Schedule OCR processing in a background thread — the endpoint returns
     # immediately and the frontend sees "verifying" via polling.
-    background_tasks.add_task(_process_document_ocr, document.id, file_path, doc_type, merchant.id)
+    # Using threading.Thread instead of FastAPI BackgroundTasks because
+    # BackgroundTasks don't survive process suspension on Render free tier.
+    t = threading.Thread(
+        target=_process_document_ocr,
+        args=(document.id, file_path, doc_type, merchant.id),
+        daemon=True,
+    )
+    t.start()
 
     return _to_response(document)
 

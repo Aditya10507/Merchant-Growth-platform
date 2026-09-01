@@ -46,6 +46,9 @@ class Settings:
     LLM_BASE_URL: str = os.getenv("LLM_BASE_URL", "https://api.groq.com/openai/v1")
     LLM_MODEL: str = os.getenv("LLM_MODEL", "qwen/qwen3.8-27b")
 
+    # --- OCR (OCR.space) ---
+    OCR_API_KEY: str = os.getenv("OCR_API_KEY", "")
+
     # --- CORS ---
     ALLOWED_ORIGINS: list[str] = os.getenv(
         "ALLOWED_ORIGINS", "http://localhost:5173"

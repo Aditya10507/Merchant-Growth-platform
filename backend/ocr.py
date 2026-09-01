@@ -71,11 +71,11 @@ class OcrEngineError(RuntimeError):
 
 def _get_api_key() -> str:
     """Returns the OCR.space API key from config or environment."""
-    key = getattr(settings, "OCR_API_KEY", "") or os.getenv("OCR_API_KEY", "")
+    key = settings.OCR_API_KEY
     if not key:
         raise OcrEngineError(
             "OCR_API_KEY is not set. Get a free key at https://ocr.space/ocrapi/freekey "
-            "and add it to backend/.env as OCR_API_KEY=your_key_here"
+            "and add it as an environment variable: OCR_API_KEY=your_key_here"
         )
     return key
 
