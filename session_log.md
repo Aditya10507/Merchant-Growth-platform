@@ -1300,3 +1300,118 @@ pending → submitted → verified_matching → active
 ---
 
 *New sessions will be appended below.*
+
+## Session 15 — E2E Test Suite Commit + Test Dataset Download Fix (September 1, 2026)
+
+### What happened
+Two tasks completed:
+
+1. **Committed E2E test suite and diagnostic scripts** to the repository
+2. **Fixed the test dataset download endpoint** that was returning "Test dataset not found on this server" error on Render
+
+### Task 1: Commit E2E Test Suite
+
+**Problem:** 16 untracked files (E2E test scripts, diagnostic tools, test artifacts) were sitting in the working directory without being committed.
+
+**Solution:** Updated `.gitignore` to exclude test artifacts, then committed all valuable test scripts.
+
+**Files committed (13 files, 3,276 lines):**
+
+| File | Purpose |
+|------|---------|
+| `backend/test_diagnose_live.py` | Live deployment diagnostic tool (tests OCR pipeline against Render) |
+| `backend/test_diagnose_upload.py` | Local upload flow diagnostic tool |
+| `frontend/e2e_quick.cjs` | Quick API + minimal UI test |
+| `frontend/e2e_diagnose.cjs` | OCR/verification error diagnostics against live deployment |
+| `frontend/e2e_diagnose_user.cjs` | User scenario reproduction via real browser UI |
+| `frontend/e2e_final.cjs` | Comprehensive 32-test suite (100% pass rate in Session 12) |
+| `frontend/e2e_full_flow.cjs` | Full flow: signup → upload → admin → decision |
+| `frontend/e2e_live.cjs` | E2E against live Render/Vercel deployment |
+| `frontend/e2e_playwright_uc1.cjs` | **Use Case 1:** All valid documents |
+| `frontend/e2e_playwright_uc2.cjs` | **Use Case 2:** Invalid documents (blank PNG) |
+| `frontend/e2e_playwright_uc3.cjs` | **Use Case 3:** Valid + matching admin verification |
+| `frontend/e2e_playwright_uc4.cjs` | **Use Case 4:** Valid + mismatched (rejected) |
+| `.gitignore` | Updated to exclude test artifacts |
+
+**Files excluded via .gitignore:**
+- `backend/test_diagnose.db` — local test database
+- `frontend/diag_scenario*.png` — diagnostic screenshots
+- `test_documents/test_documents/fake_pan.png` — test artifact
+- `test_documents/test_documents/invalid_test.txt` — test artifact
+- `test_documents/test_documents/summary.csv` — test artifact
+
+### Task 2: Fix Test Dataset Download Endpoint
+
+**Problem:** Clicking the download button on the login page showed `{"detail":"Test dataset not found on this server"}` error on the live Render deployment.
+
+**Root cause:** The `.dockerignore` was excluding `test_documents/` from the Docker build context, so the test documents were never copied to the Render container.
+
+**Solution:**
+
+1. **`backend/.dockerignore`** — Removed `test_documents/` exclusion so test documents are included in Docker image
+
+2. **`backend/Dockerfile`** — Fixed copy path:
+   ```dockerfile
+   # Before (broken)
+   COPY test_documents/ /app/test_documents/
+   
+   # After (fixed)
+   COPY test_documents/test_documents/ /app/test_documents/
+   ```
+   The original path copied the outer `test_documents/` directory contents, but `config.py` expected the inner `test_documents/test_documents/` path.
+
+3. **`backend/config.py`** — Added `TEST_DATASET_DIR` environment variable support:
+   ```python
+   TEST_DATASET_DIR: Path = Path(os.getenv(
+       "TEST_DATASET_DIR",
+       str(Path(__file__).parent.parent / "test_documents" / "test_documents")
+   ))
+   ```
+   Allows overriding the path on Render via environment variable.
+
+4. **`backend/main.py`** — Added fallback paths for robustness:
+   ```python
+   fallback_paths = [
+       Path("/app/test_documents"),  # Docker/Render
+       Path(__file__).parent / "test_documents" / "test_documents",
+       Path(__file__).parent.parent / "test_documents" / "test_documents",
+   ]
+   ```
+   If the configured path doesn't exist, tries multiple fallback locations.
+
+5. **`render.yaml`** — Added `TEST_DATASET_DIR` environment variable:
+   ```yaml
+   - key: TEST_DATASET_DIR
+     value: /app/test_documents
+   ```
+
+### Files changed
+
+| File | Change |
+|---|---|
+| `.gitignore` | Added test_diagnose.db, diagnostic screenshots, test documents |
+| `backend/.dockerignore` | Removed `test_documents/` exclusion |
+| `backend/Dockerfile` | Fixed COPY path to `test_documents/test_documents/` |
+| `backend/config.py` | Added `TEST_DATASET_DIR` env var support |
+| `backend/main.py` | Added fallback paths for download endpoint |
+| `render.yaml` | Added `TEST_DATASET_DIR` environment variable |
+
+### Git commits
+- `f9651a2` — Add comprehensive E2E test suite and diagnostic scripts
+- `52cdb39` — Fix test dataset download endpoint for Render deployment
+
+### What works now
+- Download button on login page downloads `test_dataset.zip` containing all 50 merchant test documents
+- Test documents include PAN, GST, and Bank Proof images for each merchant
+- Summary CSV with expected outcomes is included
+- Works both locally and on Render deployment
+
+### Notes for next session
+- After pushing these changes, Render needs to be redeployed for the download endpoint to work
+- The test dataset contains 50 merchant directories with synthetic KYC documents
+- E2E test scripts are now committed and can be run with `node frontend/e2e_quick.cjs` (local) or `node frontend/e2e_live.cjs` (live deployment)
+- Two commits ahead of origin — push when ready
+
+---
+
+*New sessions will be appended below.*
