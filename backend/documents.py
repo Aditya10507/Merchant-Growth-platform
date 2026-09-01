@@ -119,7 +119,7 @@ def _run_ocr(document_id: int, file_path: str, doc_type: str, merchant_id: int) 
 
         # Step 1: Run OCR to extract fields from the document image
         try:
-            fields, confidence = ocr.extract_structured_fields(file_path, doc_type)
+            fields, confidence, raw_text = ocr.extract_structured_fields(file_path, doc_type)
         except (ocr.OcrEngineError, ValueError) as exc:
             logger.warning("OCR failed for document %s: %s", document_id, exc)
             document.verification_status = "rejected"
@@ -141,13 +141,19 @@ def _run_ocr(document_id: int, file_path: str, doc_type: str, merchant_id: int) 
             )
             return
 
-        # Step 2: Format matching — does the extracted content match the
-        # expected document type's signature? Uses invalid_format (not
-        # rejected) so the merchant can retry without restarting.
-        signature = _TYPE_SIGNATURES.get(doc_type)
-        joined_text = " ".join(fields.values())
-        if signature and not signature.search(joined_text):
-            reason = f"Uploaded file does not appear to be a valid {doc_type.replace('_', ' ').title()} document"
+        # Step 2: Format matching — does the raw OCR text contain the
+        # expected document type's signature? Uses the raw OCR text
+        # (not just parsed field values) so format checking is more robust
+        # against OCR variability. Uses invalid_format (not rejected) so
+        # the merchant can retry without restarting.
+        # Lenient format matching: only reject if OCR extracted zero text
+        # (blank image, wrong file type disguised as PNG, etc.). If OCR
+        # extracted any text but the specific identifier regex didn't match
+        # (common with Indian documents due to OCR variability), let the
+        # document through — the admin verification step will catch real
+        # mismatches against external databases.
+        if not raw_text.strip():
+            reason = f"No readable text found in the uploaded {doc_type.replace('_', ' ').title()} document. Please upload a clearer image."
             document.verification_status = "invalid_format"
             document.rejection_reason = reason
             db.commit()
@@ -155,8 +161,17 @@ def _run_ocr(document_id: int, file_path: str, doc_type: str, merchant_id: int) 
                 db, merchant_id, document_id,
                 decision.DecisionOutcome(decision.Decision.REJECTED, reason),
             )
-            logger.info("Document %s format mismatch: %s", document_id, reason)
+            logger.info("Document %s: no OCR text extracted — invalid_format", document_id)
             return
+        # OCR found text — check if the expected identifier is present.
+        # Log a warning but don't block the upload; admin will verify.
+        signature = _TYPE_SIGNATURES.get(doc_type)
+        if signature and not signature.search(raw_text):
+            logger.warning(
+                "Document %s: %s identifier not found in OCR text (possible OCR garble). "
+                "Allowing upload — admin will verify against external databases.",
+                document_id, doc_type,
+            )
 
         # Step 3: Format matched — store extracted fields and OCR confidence
         document.extracted_fields_json = _json.dumps(fields)

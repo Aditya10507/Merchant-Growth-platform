@@ -257,11 +257,16 @@ FIELD_PARSERS = {
 }
 
 
-def extract_structured_fields(file_path: str, doc_type: str) -> tuple[dict[str, str], float]:
-    """Full pipeline: OCR the file, then parse fields for the given document type."""
+def extract_structured_fields(file_path: str, doc_type: str) -> tuple[dict[str, str], float, str]:
+    """Full pipeline: OCR the file, then parse fields for the given document type.
+
+    Returns (fields, confidence, raw_text) where raw_text is the full OCR
+    output used for format signature matching.
+    """
     if doc_type not in FIELD_PARSERS:
         raise ValueError(f"Unsupported document type: {doc_type}")
 
     ocr_result = extract_text(file_path)
     fields = FIELD_PARSERS[doc_type](ocr_result)
-    return fields, ocr_result.confidence
+    raw_text = " ".join(ocr_result.raw_lines)
+    return fields, ocr_result.confidence, raw_text
