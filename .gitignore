@@ -21,6 +21,11 @@ frontend/dist/
 frontend/.vite/
 frontend/tsconfig.tsbuildinfo
 
+# --- Root (accidental installs) ---
+node_modules/
+package.json
+package-lock.json
+
 # --- OS / editor ---
 .DS_Store
 .vscode/

@@ -4,7 +4,7 @@ ocr.py
 Wraps OCR.space API so the rest of the app never touches the OCR library
 directly (Dependency Inversion — callers depend on this module's small
 interface, not on the OCR.space API). This also makes it possible to swap
-the OCR engine later without touching any calling code.
+the OCR engine later without touching any calling code.  
 
 extract_text() returns the raw detected text lines and an overall
 confidence score. Turning that raw text into typed fields (pan_number,
