@@ -118,10 +118,18 @@ def _run_ocr(document_id: int, file_path: str, doc_type: str, merchant_id: int) 
             return
 
         # Step 1: Run OCR to extract fields from the document image
+        logger.info("Starting OCR for document %s (merchant %s, type %s, file %s)", document_id, merchant_id, doc_type, file_path)
         try:
             fields, confidence, raw_text = ocr.extract_structured_fields(file_path, doc_type)
+            logger.info(
+                "OCR completed for document %s: fields=%s, confidence=%.2f, raw_text_len=%d",
+                document_id, fields, confidence, len(raw_text),
+            )
         except (ocr.OcrEngineError, ValueError) as exc:
-            logger.warning("OCR failed for document %s: %s", document_id, exc)
+            logger.error(
+                "OCR FAILED for document %s (merchant %s, type %s, file %s): %s",
+                document_id, merchant_id, doc_type, file_path, exc,
+            )
             document.verification_status = "rejected"
             document.rejection_reason = str(exc)
             db.commit()
@@ -131,7 +139,7 @@ def _run_ocr(document_id: int, file_path: str, doc_type: str, merchant_id: int) 
             )
             return
         except Exception as exc:
-            logger.exception("Unexpected error during OCR for document %s", document_id)
+            logger.exception("Unexpected error during OCR for document %s (merchant %s, type %s)", document_id, merchant_id, doc_type)
             document.verification_status = "rejected"
             document.rejection_reason = "Verification service encountered an unexpected error. Please try re-uploading."
             db.commit()
@@ -154,6 +162,11 @@ def _run_ocr(document_id: int, file_path: str, doc_type: str, merchant_id: int) 
         # mismatches against external databases.
         if not raw_text.strip():
             reason = f"No readable text found in the uploaded {doc_type.replace('_', ' ').title()} document. Please upload a clearer image."
+            logger.warning(
+                "Document %s REJECTED (merchant %s, type %s): no OCR text extracted. "
+                "raw_text='%s', fields=%s, confidence=%.2f",
+                document_id, merchant_id, doc_type, raw_text, fields, confidence,
+            )
             document.verification_status = "invalid_format"
             document.rejection_reason = reason
             db.commit()
@@ -169,8 +182,8 @@ def _run_ocr(document_id: int, file_path: str, doc_type: str, merchant_id: int) 
         if signature and not signature.search(raw_text):
             logger.warning(
                 "Document %s: %s identifier not found in OCR text (possible OCR garble). "
-                "Allowing upload — admin will verify against external databases.",
-                document_id, doc_type,
+                "raw_text='%s', fields=%s. Allowing upload — admin will verify.",
+                document_id, doc_type, raw_text[:200], fields,
             )
 
         # Step 3: Format matched — store extracted fields and OCR confidence
