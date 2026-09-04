@@ -99,6 +99,13 @@ export interface CheckResult {
   detail: string;
 }
 
+/** Result of an admin maintenance action (archiving E2E/test merchants). */
+export interface MaintenanceResult {
+  archived_count: number;
+  archived_emails: string[];
+  remaining_count: number;
+}
+
 export interface ApiErrorBody {
   detail: string;
 }

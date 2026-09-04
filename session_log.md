@@ -1717,4 +1717,47 @@ Fixed a gap between what Session 17's log claimed and what the code actually did
 
 ---
 
+## Session 19 — Admin Maintenance: Archive E2E Test Merchants (September 4, 2026)
+
+### What happened
+Live E2E runs against the deployed site (Session 18 report) revealed that the batch-test accuracy report on the live DB was diluted: ~96 merchants created by prior E2E test runs (unique emails per run, no `expected_outcome` ground truth) were reported as "no expected outcome recorded, could not score", dragging accuracy to 20.66% despite 0 false approvals and a 25/25 correct score among properly seeded records.
+
+Built an admin-only maintenance feature that archives those test merchants so the report (and the admin review queue) reads correctly.
+
+### Design
+- New `Merchant.is_test` column (Boolean, default False).
+- A merchant counts as test data when it has **no `expected_outcome` audit entry** — every seeded ground-truth merchant has one, and every test-run account does not. This is data-driven (no fragile email-pattern matching).
+- Archiving is a **soft flag**, consistent with the project's soft-retire culture (documents `is_active`): rows and audit trails are preserved; the action itself is logged on the admin's own audit trail (`test_merchants_archived`).
+- Archived merchants are excluded from `GET /admin/merchants` and `POST /admin/batch-test`, so the report denominator shrinks to scorable records only.
+
+### Files changed
+
+| File | Change |
+|---|---|
+| `backend/db.py` | Added `Merchant.is_test` column. |
+| `backend/alembic/versions/8f2c1a9b4d7e_add_merchant_is_test_flag.py` | NEW migration: adds `is_test` (server default false) + backfills existing unscored merchants to `is_test = 1` (idempotent, safe on live DB). |
+| `backend/schemas.py` | Added `MaintenanceResult` response model. |
+| `backend/admin.py` | New `POST /admin/maintenance/clear-test-merchants` (admin-only, 403 for reviewers, 401 unauthenticated); `list_merchants` and `run_batch_test` now filter `is_test == False`. |
+| `backend/schema.sql` | Regenerated from ORM metadata — also fixed it being stale (was missing `risk_score`, `extracted_pan_number`, `extracted_account_number` from Session 10). |
+| `frontend/src/types.ts` | Added `MaintenanceResult` type. |
+| `frontend/src/api.ts` | Added `clearTestMerchants()`. |
+| `frontend/src/pages/AdminPage.tsx` | "Archive test merchants" button (admin role only) next to the filter tabs, with success/error feedback; archived merchants vanish from the list on refresh. |
+
+### Verification
+- `python -m py_compile *.py alembic/versions/*.py`: clean.
+- TestClient suite (temp DB, 15 checks): 3 signup-created merchants archived, seeded 25 untouched, second run idempotent (0 archived), archived excluded from admin list, batch test totals 25 with zero unresolved exceptions, reviewer gets 403, unauthenticated gets 401. **15/15 passed.**
+- Migration tested against a simulated pre-migration DB (column dropped + stamped at old head): upgrade applied cleanly, ground-truth merchant preserved (`is_test=0`), E2E merchant archived (`is_test=1`), alembic head updated. **Backfill verified.**
+- `npm run typecheck` (tsc -b --noEmit): zero errors. `npm run build`: succeeds.
+
+### How to use (live demo)
+1. Deploy (Render auto-deploys from master). The migration runs at startup and backfills existing test merchants automatically.
+2. Admin panel → click **"Archive test merchants"** (or `POST /admin/maintenance/clear-test-merchants`).
+3. `POST /admin/batch-test` now reads e.g. 25/25 with no unresolved exceptions.
+
+### Notes for next session
+- Stale-docs item still open: `docs/01_PRD.md`/README still describe the old fully-automated design.
+- Minor: `playwright` in frontend `dependencies` instead of `devDependencies`.
+
+---
+
 *New sessions will be appended below.*

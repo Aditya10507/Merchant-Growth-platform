@@ -26,6 +26,7 @@ import logging
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy import exists as sa_exists
 from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
@@ -38,6 +39,7 @@ from db import AuditLog, Document, Merchant, get_db
 from schemas import (
     AuditLogEntryResponse,
     BatchTestReport,
+    MaintenanceResult,
     MerchantDetailResponse,
     MerchantSummaryResponse,
     ResolveExceptionRequest,
@@ -93,8 +95,13 @@ def list_merchants(
     """
     Returns a list of all merchant accounts, optionally filtered by
     onboarding_status. Used by the admin panel's status-filter tabs.
+
+    Archived test merchants (is_test=True) are excluded — they were
+    created by E2E test runs and only pollute the review queue.
     """
-    query = db.query(Merchant).filter(Merchant.role == "merchant")
+    query = db.query(Merchant).filter(
+        Merchant.role == "merchant", Merchant.is_test == False
+    )
     if status_filter:
         query = query.filter(Merchant.onboarding_status == status_filter)
     merchants = query.all()
@@ -332,13 +339,64 @@ def decide_application(
     return _merchant_to_summary(merchant)
 
 
+@router.post("/maintenance/clear-test-merchants", response_model=MaintenanceResult)
+def clear_test_merchants(
+    db: Session = Depends(get_db),
+    admin: Merchant = Depends(require_role("admin")),
+) -> MaintenanceResult:
+    """
+    Admin-only maintenance: archives merchants created by E2E test runs so
+    the /admin/batch-test accuracy report (and the admin queue) reads
+    correctly on a live demo database.
+
+    A merchant is considered test data when it has NO `expected_outcome`
+    audit entry — the seeded ground-truth merchants all have one, and every
+    test-run account (unique emails per run) does not. Archiving is a soft
+    flag (Merchant.is_test=True): rows and audit trails are preserved, and
+    the action itself is logged on the admin's own audit trail.
+    """
+    has_expected_outcome = sa_exists().where(
+        AuditLog.merchant_id == Merchant.id,
+        AuditLog.action == "expected_outcome",
+    )
+    test_merchants = db.query(Merchant).filter(
+        Merchant.role == "merchant",
+        Merchant.is_test == False,
+        ~has_expected_outcome,
+    ).all()
+
+    archived_emails = [m.email for m in test_merchants]
+    for merchant in test_merchants:
+        merchant.is_test = True
+
+    if test_merchants:
+        db.add(AuditLog(
+            merchant_id=admin.id,
+            action="test_merchants_archived",
+            reason=f"Archived {len(test_merchants)} E2E/test merchant(s) via maintenance action",
+        ))
+    db.commit()
+
+    remaining = db.query(Merchant).filter(
+        Merchant.role == "merchant", Merchant.is_test == False
+    ).count()
+
+    return MaintenanceResult(
+        archived_count=len(test_merchants),
+        archived_emails=archived_emails,
+        remaining_count=remaining,
+    )
+
+
 @router.post("/batch-test", response_model=BatchTestReport)
 def run_batch_test(
     db: Session = Depends(get_db),
     _admin: Merchant = Depends(require_role("admin")),
 ) -> BatchTestReport:
     """
-    Reports accuracy across every merchant currently in the system.
+    Reports accuracy across every non-archived merchant currently in the
+    system. Archived test merchants (is_test=True) are excluded so the
+    accuracy % is computed over scorable records only.
     Intended to be run against the seeded synthetic dataset (see
     seed.py) so judges can see measured accuracy, not just a live demo.
 
@@ -346,7 +404,9 @@ def run_batch_test(
     `expected_outcome` audit note written by seed.py, so this reflects
     ground truth built into the test data — not a guess.
     """
-    merchants = db.query(Merchant).filter(Merchant.role == "merchant").all()
+    merchants = db.query(Merchant).filter(
+        Merchant.role == "merchant", Merchant.is_test == False
+    ).all()
     total = len(merchants)
     correctly_approved = 0
     correctly_flagged = 0

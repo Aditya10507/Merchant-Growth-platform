@@ -28,9 +28,9 @@ CREATE TABLE automated_verification (
 )
 
 ;
-CREATE INDEX ix_automated_verification_pan_number ON automated_verification (pan_number);
+CREATE INDEX ix_automated_verification_pan_number ON automated_verification (pan_number)
 
-
+;
 CREATE TABLE bank_account_validation (
 	id INTEGER NOT NULL, 
 	account_number VARCHAR(30) NOT NULL, 
@@ -41,9 +41,9 @@ CREATE TABLE bank_account_validation (
 )
 
 ;
-CREATE UNIQUE INDEX ix_bank_account_validation_account_number ON bank_account_validation (account_number);
+CREATE UNIQUE INDEX ix_bank_account_validation_account_number ON bank_account_validation (account_number)
 
-
+;
 CREATE TABLE ckyc_records (
 	id INTEGER NOT NULL, 
 	ckyc_id VARCHAR(50) NOT NULL, 
@@ -55,9 +55,9 @@ CREATE TABLE ckyc_records (
 )
 
 ;
-CREATE INDEX ix_ckyc_records_pan_number ON ckyc_records (pan_number);
+CREATE INDEX ix_ckyc_records_pan_number ON ckyc_records (pan_number)
 
-
+;
 CREATE TABLE compliance_reviews (
 	id INTEGER NOT NULL, 
 	pan_number VARCHAR(20) NOT NULL, 
@@ -68,9 +68,9 @@ CREATE TABLE compliance_reviews (
 )
 
 ;
-CREATE INDEX ix_compliance_reviews_pan_number ON compliance_reviews (pan_number);
+CREATE INDEX ix_compliance_reviews_pan_number ON compliance_reviews (pan_number)
 
-
+;
 CREATE TABLE govt_database (
 	id INTEGER NOT NULL, 
 	pan_number VARCHAR(20) NOT NULL, 
@@ -81,9 +81,9 @@ CREATE TABLE govt_database (
 )
 
 ;
-CREATE UNIQUE INDEX ix_govt_database_pan_number ON govt_database (pan_number);
+CREATE UNIQUE INDEX ix_govt_database_pan_number ON govt_database (pan_number)
 
-
+;
 CREATE TABLE merchants (
 	id INTEGER NOT NULL, 
 	business_name VARCHAR(255) NOT NULL, 
@@ -95,14 +95,16 @@ CREATE TABLE merchants (
 	matched_checks TEXT, 
 	mismatched_checks TEXT, 
 	rejection_cause TEXT, 
+	risk_score INTEGER, 
+	is_test BOOLEAN NOT NULL, 
 	created_at DATETIME, 
 	PRIMARY KEY (id)
 )
 
 ;
-CREATE UNIQUE INDEX ix_merchants_email ON merchants (email);
+CREATE UNIQUE INDEX ix_merchants_email ON merchants (email)
 
-
+;
 CREATE TABLE documents (
 	id INTEGER NOT NULL, 
 	merchant_id INTEGER NOT NULL, 
@@ -113,6 +115,8 @@ CREATE TABLE documents (
 	verification_status VARCHAR(30) NOT NULL, 
 	rejection_reason TEXT, 
 	is_active BOOLEAN NOT NULL, 
+	extracted_pan_number VARCHAR(20), 
+	extracted_account_number VARCHAR(30), 
 	created_at DATETIME, 
 	updated_at DATETIME, 
 	PRIMARY KEY (id), 
@@ -120,8 +124,12 @@ CREATE TABLE documents (
 )
 
 ;
+CREATE INDEX ix_documents_extracted_account_number ON documents (extracted_account_number)
 
+;
+CREATE INDEX ix_documents_extracted_pan_number ON documents (extracted_pan_number)
 
+;
 CREATE TABLE audit_logs (
 	id INTEGER NOT NULL, 
 	merchant_id INTEGER NOT NULL, 
@@ -133,6 +141,4 @@ CREATE TABLE audit_logs (
 	FOREIGN KEY(merchant_id) REFERENCES merchants (id), 
 	FOREIGN KEY(document_id) REFERENCES documents (id)
 )
-
 ;
-

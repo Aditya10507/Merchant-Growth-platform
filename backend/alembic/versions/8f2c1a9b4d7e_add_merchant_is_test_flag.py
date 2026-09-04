@@ -1,0 +1,46 @@
+"""add merchant is_test flag for archiving E2E/test merchants
+
+Revision ID: 8f2c1a9b4d7e
+Revises: 06c7dad78bad
+Create Date: 2026-09-04
+
+The live demo database accumulates merchants created by E2E test runs
+(unique emails per run, no expected_outcome ground truth). These dilute
+the /admin/batch-test accuracy report with "could not score" rows. This
+migration adds Merchant.is_test and backfills it: any merchant-role
+account WITHOUT an expected_outcome audit entry is test data (the seeded
+ground-truth merchants all have one), so it gets flagged and excluded
+from the batch test + admin queue.
+
+"""
+from typing import Sequence, Union
+
+from alembic import op
+import sqlalchemy as sa
+
+
+# revision identifiers, used by Alembic.
+revision: str = '8f2c1a9b4d7e'
+down_revision: Union[str, Sequence[str], None] = '06c7dad78bad'
+branch_labels: Union[str, Sequence[str], None] = None
+depends_on: Union[str, Sequence[str], None] = None
+
+
+def upgrade() -> None:
+    """Upgrade schema."""
+    with op.batch_alter_table('merchants', schema=None) as batch_op:
+        batch_op.add_column(sa.Column('is_test', sa.Boolean(), nullable=False, server_default=sa.false()))
+
+    # Backfill: merchants without an expected_outcome audit entry are
+    # E2E/test-created accounts and can never be scored by batch-test.
+    op.execute(
+        "UPDATE merchants SET is_test = 1 "
+        "WHERE role = 'merchant' AND id NOT IN "
+        "(SELECT merchant_id FROM audit_logs WHERE action = 'expected_outcome')"
+    )
+
+
+def downgrade() -> None:
+    """Downgrade schema."""
+    with op.batch_alter_table('merchants', schema=None) as batch_op:
+        batch_op.drop_column('is_test')

@@ -12,8 +12,10 @@ import {
   getMerchantDetail,
   verifyApplication,
   decideApplication,
+  clearTestMerchants,
   ApiError,
 } from "../api";
+import { useAuth } from "../AuthContext";
 import { Alert } from "../components/Alert";
 import { Button } from "../components/Button";
 import { InputField } from "../components/InputField";
@@ -27,6 +29,7 @@ import type {
   AsyncState,
   CheckResult,
   DocumentStatus,
+  MaintenanceResult,
   MerchantDetail,
   MerchantSummary,
 } from "../types";
@@ -55,6 +58,8 @@ function formatDate(isoString: string): string {
 }
 
 function AdminPageBase() {
+  const { session } = useAuth();
+  const isAdmin = session?.role === "admin";
   const [activeTab, setActiveTab] = useState<StatusTab>("All");
   const [listState, setListState] = useState<AsyncState<MerchantSummary[]>>({ status: "idle" });
   const [selectedMerchantId, setSelectedMerchantId] = useState<number | null>(null);
@@ -62,6 +67,7 @@ function AdminPageBase() {
   const [verifyState, setVerifyState] = useState<AsyncState<MerchantDetail>>({ status: "idle" });
   const [resolveNote, setResolveNote] = useState<string>("");
   const [resolveState, setResolveState] = useState<AsyncState<MerchantSummary>>({ status: "idle" });
+  const [maintenanceState, setMaintenanceState] = useState<AsyncState<MaintenanceResult>>({ status: "idle" });
 
   const fetchMerchants = useCallback(async (tab: StatusTab) => {
     setListState({ status: "loading" });
@@ -133,6 +139,21 @@ function AdminPageBase() {
     [selectedMerchantId, resolveNote, activeTab, selectMerchant, fetchMerchants]
   );
 
+  const handleClearTestMerchants = useCallback(async () => {
+    setMaintenanceState({ status: "loading" });
+    try {
+      const result = await clearTestMerchants();
+      setMaintenanceState({ status: "success", data: result });
+      // Archived merchants disappear from the review queue
+      await fetchMerchants(activeTab);
+    } catch (error) {
+      setMaintenanceState({
+        status: "error",
+        message: error instanceof ApiError ? error.message : "Could not archive test merchants.",
+      });
+    }
+  }, [activeTab, fetchMerchants]);
+
   const closeDetail = useCallback(() => {
     setSelectedMerchantId(null);
     setDetailState({ status: "idle" });
@@ -151,23 +172,52 @@ function AdminPageBase() {
         whether to activate or reject each account.
       </p>
 
-      {/* Status filter tabs */}
-      <nav aria-label="Filter merchants by status" className="mb-6 flex gap-2 flex-wrap">
-        {STATUS_TABS.map((tab) => (
-          <button
-            key={tab}
-            onClick={() => setActiveTab(tab)}
-            className={`rounded-md px-3 py-1.5 text-sm font-medium transition-colors duration-150 ${
-              activeTab === tab
-                ? "bg-gray-900 text-white"
-                : "bg-white text-gray-600 border border-gray-200 hover:bg-gray-50"
-            }`}
-            aria-pressed={activeTab === tab}
-          >
-            {tab === "All" ? "All" : STATUS_LABELS[tab] ?? tab}
-          </button>
-        ))}
-      </nav>
+      {/* Status filter tabs + maintenance action */}
+      <div className="mb-6 flex flex-wrap items-start justify-between gap-3">
+        <nav aria-label="Filter merchants by status" className="flex gap-2 flex-wrap">
+          {STATUS_TABS.map((tab) => (
+            <button
+              key={tab}
+              onClick={() => setActiveTab(tab)}
+              className={`rounded-md px-3 py-1.5 text-sm font-medium transition-colors duration-150 ${
+                activeTab === tab
+                  ? "bg-gray-900 text-white"
+                  : "bg-white text-gray-600 border border-gray-200 hover:bg-gray-50"
+              }`}
+              aria-pressed={activeTab === tab}
+            >
+              {tab === "All" ? "All" : STATUS_LABELS[tab] ?? tab}
+            </button>
+          ))}
+        </nav>
+
+        {isAdmin && (
+          <div className="flex flex-col items-end gap-1.5">
+            <Button
+              variant="secondary"
+              onClick={handleClearTestMerchants}
+              isLoading={maintenanceState.status === "loading"}
+            >
+              Archive test merchants
+            </Button>
+            <p className="text-right text-xs text-gray-400">
+              Removes E2E/test-run accounts from this queue and the batch-test
+              accuracy report. Their records are preserved, not deleted.
+            </p>
+            {maintenanceState.status === "success" && (
+              <Alert variant="success">
+                Archived {maintenanceState.data.archived_count} test merchant
+                {maintenanceState.data.archived_count === 1 ? "" : "s"}. Batch test
+                now scores {maintenanceState.data.remaining_count} merchant
+                {maintenanceState.data.remaining_count === 1 ? "" : "s"}.
+              </Alert>
+            )}
+            {maintenanceState.status === "error" && (
+              <Alert variant="error">{maintenanceState.message}</Alert>
+            )}
+          </div>
+        )}
+      </div>
 
       <div className="flex gap-6">
         {/* Merchant list — data table */}

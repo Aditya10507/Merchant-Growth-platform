@@ -171,3 +171,11 @@ class ResolveExceptionRequest(BaseModel):
     # Note is optional — if rejecting and no note is supplied, the stored
     # rejection_cause (auto-generated from mismatched checks) is used.
     note: Optional[str] = Field(default=None, max_length=1000)
+
+
+class MaintenanceResult(BaseModel):
+    """Result of an admin maintenance action (e.g. archiving test merchants)."""
+    archived_count: int
+    archived_emails: list[str]
+    # Merchants that still participate in the batch-test accuracy report.
+    remaining_count: int

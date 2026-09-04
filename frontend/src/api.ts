@@ -13,6 +13,7 @@ import type {
   AuthResponse,
   DocumentStatus,
   DocumentType,
+  MaintenanceResult,
   MerchantDetail,
   MerchantStatus,
   MerchantSummary,
@@ -134,5 +135,16 @@ export function decideApplication(
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ decision, note: note || null }),
+  });
+}
+
+/**
+ * Admin-only maintenance: archives merchants created by E2E test runs
+ * (those without ground-truth expected_outcome records) so the batch-test
+ * accuracy report and the review queue read correctly.
+ */
+export function clearTestMerchants(): Promise<MaintenanceResult> {
+  return request<MaintenanceResult>("/admin/maintenance/clear-test-merchants", {
+    method: "POST",
   });
 }

@@ -68,6 +68,12 @@ class Merchant(Base):
     # Weighted 0-100 risk score computed at verify-time (see admin.py).
     # Null until the admin runs verification — null != 0 (unscored vs assessed).
     risk_score = Column(Integer, nullable=True)
+    # True once an admin archives this merchant as E2E/test data via
+    # POST /admin/maintenance/clear-test-merchants. Archived merchants are
+    # excluded from the admin list and the /admin/batch-test accuracy
+    # report (they were created by test runs and have no expected_outcome
+    # ground truth), but their rows + audit trail are preserved.
+    is_test = Column(Boolean, nullable=False, default=False)
     created_at = Column(DateTime, default=_utcnow)
 
     documents = relationship("Document", back_populates="merchant")
