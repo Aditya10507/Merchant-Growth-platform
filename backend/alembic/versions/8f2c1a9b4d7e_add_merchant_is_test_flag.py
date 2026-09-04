@@ -28,8 +28,16 @@ depends_on: Union[str, Sequence[str], None] = None
 
 def upgrade() -> None:
     """Upgrade schema."""
-    with op.batch_alter_table('merchants', schema=None) as batch_op:
-        batch_op.add_column(sa.Column('is_test', sa.Boolean(), nullable=False, server_default=sa.false()))
+    # Idempotent: db.py's init_db() safety net (_ensure_is_test_column)
+    # may already have added this column when seed.py runs standalone
+    # before migrations. Skip the ALTER in that case so re-running this
+    # migration never fails with DuplicateColumn.
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
+    columns = {c["name"] for c in inspector.get_columns("merchants")}
+    if "is_test" not in columns:
+        with op.batch_alter_table('merchants', schema=None) as batch_op:
+            batch_op.add_column(sa.Column('is_test', sa.Boolean(), nullable=False, server_default=sa.false()))
 
     # Backfill: merchants without an expected_outcome audit entry are
     # E2E/test-created accounts and can never be scored by batch-test.

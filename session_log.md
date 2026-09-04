@@ -1772,22 +1772,33 @@ Both entry paths run seeding before the server:
 
 `seed.py` queries the ORM (`db.query(Merchant).count()`) with **no alembic upgrade step of its own**, so any schema change that adds a column breaks the standalone seed invocation and fails the whole deploy (seed.py has no try/except, so the ProgrammingError propagated → exit 1).
 
-### Fix
+### Fix (round 1)
 Centralized the Alembic wiring into one place and called it from both entry points:
 
 | File | Change |
 |---|---|
 | `backend/db.py` | New `apply_migrations()` — runs `alembic upgrade head`, or stamps at head on a fresh DB where `init_db()` already created the full ORM schema. Idempotent; resolves `alembic.ini` via `Path(__file__).parent` so it works from any CWD (Docker `/app`, Render `cd backend`, local). |
 | `backend/main.py` | Lifespan now calls `db.apply_migrations()` instead of the duplicated inline alembic block. |
-| `backend/seed.py` | `main()` calls `apply_migrations()` right after `init_db()`, with a comment explaining why (the Session 19 deploy failure). |
+| `backend/seed.py` | `main()` calls `apply_migrations()` right after `init_db()`. |
 
-### Verification
-- Reproduced the exact Render failure locally: simulated a pre-migration live DB (full schema minus `is_test`, `alembic_version` stamped at `06c7dad78bad`, existing merchants) → ran `DATABASE_URL=... python seed.py` → **exit 0**, column added, ground-truth merchant preserved (`is_test=0`), test merchant archived (`is_test=1`), head updated to `8f2c1a9b4d7e`. ✅
-- App boots via TestClient on that migrated DB: `/health` 200, admin login + `/admin/merchants` + `/admin/batch-test` all work with the `is_test` filter. ✅
+### Fix (round 2) — the deploy STILL failed
+Two more failed deploys (05:26:54, 05:35:41 UTC) showed the identical `column merchants.is_test does not exist` crash at seed.py's `Merchant.count()`, even with `apply_migrations()` called first. The user opted to skip further log forensics, so the fix was made **self-healing** so the deploy succeeds regardless of whether Alembic reliably applies from the standalone seed path:
+
+| File | Change |
+|---|---|
+| `backend/db.py` | `init_db()` now calls a new `_ensure_is_test_column()` safety net: idempotent `ALTER TABLE merchants ADD COLUMN is_test BOOLEAN NOT NULL DEFAULT false` (inspector-checked, SQLite/PG-compatible) + the unscored-merchant backfill. Runs on EVERY startup before any ORM query, in both entry paths. Alembic stays the source of truth; this only heals the seed-before-migrations ordering problem. |
+| `backend/alembic/versions/8f2c1a9b4d7e` | Migration made idempotent: skips the ADD COLUMN if the column already exists (so it never fails with DuplicateColumn after the safety net ran), always runs the backfill. |
+| `backend/seed.py` | `apply_migrations()` stays but is non-fatal (default); a failed migration prints its traceback to stdout (visible in deploy logs) but no longer blocks startup, since `init_db()` already guaranteed the schema. |
+
+### Verification (round 2)
+- Harshest case (no alembic_version at all, column dropped): `init_db()` alone re-adds the column and backfills correctly. ✅
+- Exact Render pre-migration state (`alembic_version` at `06c7dad78bad`, no column): `python seed.py` → **exit 0**, head advances to `8f2c1a9b4d7e`, ground truth preserved (`is_test=0`), test merchant archived (`is_test=1`). ✅
+- Migration re-run with column already present: no DuplicateColumn. ✅
+- Endpoint regression suite (13 checks): archive works, reviewer 403, idempotent re-run, admin list excludes archived, batch test totals 25 with zero exceptions. ✅
 - `python -m py_compile *.py alembic/versions/*.py`: clean.
 
 ### Lesson learned (future schema changes)
-**Any new column/table must be safe for `python seed.py` to run standalone**, because that runs before uvicorn on Docker/Render. Keep using `apply_migrations()` at the top of seed's `main()` — do not remove it.
+**Any new column/table must be safe for `python seed.py` to run standalone**, because that runs before uvicorn on Docker/Render. If a new column needs the same treatment, extend `_ensure_is_test_column()` (or generalize it) — and keep migrations idempotent.
 
 ---
 

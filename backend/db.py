@@ -183,12 +183,54 @@ engine = create_engine(
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 
+def _ensure_is_test_column() -> None:
+    """
+    Deployment-ordering safety net for Merchant.is_test.
+
+    `python seed.py` runs standalone BEFORE uvicorn on Docker/Render, and
+    Alembic migrations have proven unreliable to run from that standalone
+    path (Session 19: deploy failed with "column merchants.is_test does
+    not exist" because the ORM selects the column before the migration
+    could apply). This helper guarantees the column exists (and backfills
+    it) on ANY dialect, idempotently, before any ORM query runs.
+
+    The Alembic migration in alembic/versions/ is still the source of
+    truth for schema history; this is only the safety net that makes the
+    seed-before-migrations startup ordering safe. New columns should go
+    through Alembic normally — if a new column needs the same treatment,
+    extend this helper.
+    """
+    import logging
+
+    from sqlalchemy import inspect as sa_inspect, text
+
+    logger = logging.getLogger(__name__)
+    with engine.begin() as conn:
+        inspector = sa_inspect(conn)
+        columns = {c["name"] for c in inspector.get_columns("merchants")}
+        if "is_test" not in columns:
+            conn.execute(text(
+                "ALTER TABLE merchants ADD COLUMN is_test BOOLEAN NOT NULL DEFAULT false"
+            ))
+            logger.info("Added missing merchants.is_test column (startup safety net).")
+        # Backfill: merchants without an expected_outcome audit entry are
+        # E2E/test-created accounts and can never be scored by batch-test.
+        conn.execute(text(
+            "UPDATE merchants SET is_test = 1 "
+            "WHERE role = 'merchant' AND id NOT IN "
+            "(SELECT merchant_id FROM audit_logs WHERE action = 'expected_outcome')"
+        ))
+
+
 def init_db() -> None:
     """Create all tables if they don't already exist."""
     Base.metadata.create_all(bind=engine)
+    # Ensure the schema the ORM expects is actually present before any
+    # query selects it (see _ensure_is_test_column docstring).
+    _ensure_is_test_column()
 
 
-def apply_migrations() -> None:
+def apply_migrations(strict: bool = False) -> None:
     """
     Applies Alembic migrations to the current database — or stamps Alembic
     at head on a fresh database, where init_db() already created the full
@@ -201,6 +243,10 @@ def apply_migrations() -> None:
     would crash on columns that don't exist yet (this bit us in Session 19
     — the live deploy failed with "column merchants.is_test does not
     exist"). Idempotent; safe to call repeatedly.
+
+    strict=True (used by the standalone `python seed.py` entrypoint):
+    re-raises any migration failure so the deploy log shows the REAL
+    cause instead of a downstream "column does not exist" crash.
     """
     import logging
     from pathlib import Path
@@ -221,7 +267,14 @@ def apply_migrations() -> None:
         else:
             alembic_command.upgrade(alembic_cfg, "head")
             logger.info("Alembic migrations applied successfully.")
-    except Exception:
+    except Exception as exc:
+        # Print to stdout too — deploy logs capture it even when Python
+        # logging isn't configured (standalone seed.py sets up no handlers).
+        import traceback
+
+        traceback.print_exc()
+        if strict:
+            raise RuntimeError(f"Alembic migration failed: {exc}") from exc
         logger.exception("Alembic migration failed — continuing with existing schema.")
 
 

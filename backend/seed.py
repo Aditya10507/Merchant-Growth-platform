@@ -192,9 +192,10 @@ def main() -> None:
     # CRITICAL: this module runs standalone (`python seed.py`) as the
     # Docker/Render start command BEFORE uvicorn boots. The ORM queries
     # below need the latest schema, so apply Alembic migrations here too
-    # (idempotent; stamps at head on a fresh DB). Without this, a schema
-    # change like Merchant.is_test crashes seed.py with
-    # "column merchants.is_test does not exist" and the deploy fails.
+    # (idempotent; stamps at head on a fresh DB).
+    # Note: init_db() already self-heals the schema via
+    # _ensure_is_test_column(), so even if Alembic fails here the deploy
+    # can proceed — the failure is printed to the log but is not fatal.
     apply_migrations()
     db = SessionLocal()
     try:
