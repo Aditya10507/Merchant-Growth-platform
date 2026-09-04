@@ -2187,4 +2187,18 @@ Also: removed the now-unused `playwright` npm dependency (only the deleted front
 
 ---
 
+## Session 32 — Demo video script (5 minutes)
+
+**Request:** Write a full script for a 5-minute demo video covering the problem statement, the existing system, the proposal, the architecture, the data flow, and a live website demo. Everything in simple English, easy for anyone to understand.
+
+**Done:**
+- Created `docs/DEMO_SCRIPT.md`: six timed sections (45s / 40s / 45s / 55s / 45s / 70s = 300 seconds).
+- Each section has an on-screen cue and narration in short, plain sentences. Technical words (OCR, audit trail, fraud ring) are explained on first use. No emojis or decorative symbols.
+- Trimmed narration from 946 words to **633 words** (about 4.5 minutes at a calm 140 wpm), leaving buffer for on-screen actions and pauses inside the 5-minute budget.
+- Technical notes at the end: test folders (Baljit Khan clean, Manpreet Patel flagged), demo accounts, live URLs, and recording tips.
+
+**Verification:** automated scan reports **0** emoji / box-drawing / arrow / fancy-symbol characters; narration word counts per section checked.
+
+---
+
 *New sessions will be appended below.*
