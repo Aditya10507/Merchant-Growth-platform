@@ -12,6 +12,7 @@ export type VerificationStatus =
   | "uploaded"
   | "verifying"
   | "invalid_format"
+  | "temporarily_unavailable"
   | "pending"
   | "submitted"
   | "verified_matching"

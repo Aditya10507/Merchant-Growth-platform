@@ -21,6 +21,8 @@ const STATUS_STYLES: Record<VerificationStatus, StatusStyle> = {
   uploaded: { classes: "bg-white border border-gray-300 text-gray-700", icon: null },
   verifying: { classes: "bg-gray-100 border border-gray-300 text-gray-800", icon: Clock },
   invalid_format: { classes: "bg-white border-2 border-gray-800 text-gray-900", icon: AlertTriangle },
+  // OCR service hiccup — neutral, retryable, not the merchant's fault
+  temporarily_unavailable: { classes: "bg-gray-100 border border-gray-300 text-gray-800", icon: Clock },
   pending: { classes: "bg-gray-100 border border-gray-300 text-gray-800", icon: Clock },
   submitted: { classes: "bg-gray-100 border border-gray-300 text-gray-800", icon: Clock },
   verified_matching: { classes: "bg-gray-100 border border-gray-300 text-gray-800", icon: Clock },

@@ -81,6 +81,7 @@ function DocumentSlotBase({ docType, label, hint, onUploaded, currentStatus }: D
   const displayedStatus = currentStatus ?? (uploadState.status === "success" ? uploadState.data : null);
 
   const isInvalidFormat = displayedStatus?.verification_status === "invalid_format";
+  const isTemporarilyUnavailable = displayedStatus?.verification_status === "temporarily_unavailable";
   const isVerifying = displayedStatus?.verification_status === "verifying";
 
   return (
@@ -117,6 +118,11 @@ function DocumentSlotBase({ docType, label, hint, onUploaded, currentStatus }: D
       {isInvalidFormat && (
         <Alert variant="error">
           {displayedStatus?.rejection_reason || "Invalid document — please check the document and try again."}
+        </Alert>
+      )}
+      {isTemporarilyUnavailable && (
+        <Alert variant="error">
+          {displayedStatus?.rejection_reason || "Document verification is temporarily unavailable. Please try again."}
         </Alert>
       )}
       {isVerifying && <Alert variant="success">Valid document — verifying identity details…</Alert>}

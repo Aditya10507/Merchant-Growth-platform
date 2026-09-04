@@ -36,6 +36,7 @@ export const STATUS_LABELS: Record<string, string> = {
   uploaded: "Uploaded",
   verifying: "Verifying",
   invalid_format: "Invalid document",
+  temporarily_unavailable: "Retry upload",
   pending: "Pending",
   submitted: "Awaiting verification",
   verified_matching: "Verified - matches",

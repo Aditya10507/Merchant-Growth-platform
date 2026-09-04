@@ -125,6 +125,29 @@ def _run_ocr(document_id: int, file_path: str, doc_type: str, merchant_id: int) 
                 "OCR completed for document %s: fields=%s, confidence=%.2f, raw_text_len=%d",
                 document_id, fields, confidence, len(raw_text),
             )
+        except ocr.OcrTemporarilyUnavailableError as exc:
+            # The OCR service itself was unavailable (retries exhausted in
+            # ocr.py) — this is NOT the merchant's fault and NOT a valid
+            # reason to hard-reject their document. Mark it with the
+            # retry-friendly "temporarily_unavailable" status and a plain-
+            # language message so they can simply try again in the same
+            # slot. The full technical reason still goes to the audit log
+            # so the incident stays traceable.
+            logger.warning(
+                "OCR service temporarily unavailable for document %s (merchant %s, type %s, file %s): %s",
+                document_id, merchant_id, doc_type, file_path, exc,
+            )
+            document.verification_status = "temporarily_unavailable"
+            document.rejection_reason = (
+                "Document verification is temporarily unavailable. "
+                "Please try uploading again in a moment."
+            )
+            db.commit()
+            decision.log_decision(
+                db, merchant_id, document_id,
+                decision.DecisionOutcome(decision.Decision.REJECTED, str(exc)),
+            )
+            return
         except (ocr.OcrEngineError, ValueError) as exc:
             logger.error(
                 "OCR FAILED for document %s (merchant %s, type %s, file %s): %s",

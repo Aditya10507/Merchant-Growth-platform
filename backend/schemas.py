@@ -16,7 +16,7 @@ from pydantic import BaseModel, EmailStr, Field, field_validator
 from config import settings
 
 DocumentType = Literal["PAN", "GST", "BANK_PROOF"]
-VerificationStatus = Literal["uploaded", "verifying", "invalid_format", "submitted", "approved", "flagged", "rejected"]
+VerificationStatus = Literal["uploaded", "verifying", "invalid_format", "temporarily_unavailable", "submitted", "approved", "flagged", "rejected"]
 
 
 # ---------------------------------------------------------------------------

@@ -1677,4 +1677,44 @@ pending → submitted → verified_matching → active
 
 ---
 
+## Session 18 — OCR Temporary-Unavailability Handling (September 4, 2026)
+
+### What happened
+Fixed a gap between what Session 17's log claimed and what the code actually did: the log said `documents.py` was updated to handle `OcrTemporarilyUnavailableError` with a retry-friendly status, but the exception was still caught by the generic `except (ocr.OcrEngineError, ValueError)` branch in `_run_ocr()` and the document was hard-marked `rejected` with a raw technical message. A transient OCR.space outage looked like a permanent rejection of the merchant's document.
+
+### Root cause
+- `OcrTemporarilyUnavailableError` subclasses `OcrEngineError`, so the pre-existing catch order swallowed it.
+- The `e66baf8` commit only added logging to `documents.py` — the special-cased handling described in the Session 17 log was never implemented.
+
+### Changes made
+
+| File | Change |
+|---|---|
+| `backend/documents.py` | Added a dedicated `except ocr.OcrTemporarilyUnavailableError` branch **before** the generic `OcrEngineError` branch in `_run_ocr()`. Sets `verification_status = "temporarily_unavailable"` (merchant can retry in the same slot, no restart needed), a plain-language merchant-facing reason ("Document verification is temporarily unavailable. Please try uploading again in a moment."), and still logs the full technical reason to the audit trail as a `rejected`-type outcome for audit-consistency (same pattern as `invalid_format`). |
+| `backend/schemas.py` | Added `"temporarily_unavailable"` to the `VerificationStatus` Literal. |
+| `frontend/src/types.ts` | Added `"temporarily_unavailable"` to the `VerificationStatus` union. |
+| `frontend/src/constants.ts` | Added `temporarily_unavailable: "Retry upload"` to `STATUS_LABELS`. |
+| `frontend/src/components/StatusBadge.tsx` | Added a neutral (gray, Clock icon) style for the new status — distinct from the heavy `invalid_format`/`rejected` treatments. |
+| `frontend/src/components/DocumentSlot.tsx` | Renders the friendly "please try again" alert when the new status is present (mirrors the existing `invalid_format` handling). |
+
+### Verification
+- `python -m py_compile *.py`: clean.
+- Targeted `TestClient` script (temp DB, mocked OCR):
+  - `OcrTemporarilyUnavailableError` → upload returns 201, document status `temporarily_unavailable`, friendly reason shown, merchant stays at `pending` (can retry without restarting). ✅
+  - Generic `OcrEngineError` → document still hard-rejected (prior behavior preserved). ✅
+  - 6/6 checks passed. Script + temp DB deleted afterward.
+- `npm run typecheck` (tsc -b --noEmit): zero errors.
+- `npm run build`: succeeds.
+
+### Design decisions
+- New dedicated status rather than reusing `invalid_format`, because `ocr.py`'s own docstring explicitly says a service outage should **not** look like a hard "invalid document" rejection — it's a different condition with the same retry-in-slot remedy.
+- Merchant-facing message stays generic (no OCR.space internals, no file paths); technical detail lives in the audit trail, consistent with the project's explainability rules.
+- No new status appears in the admin filter tabs — it's a transient per-document state that resolves as soon as the merchant re-uploads.
+
+### Notes for next session
+- The stale-docs item is still open: `docs/01_PRD.md` success metrics and the README intro describe the old fully-automated design ("auto-approval ≥90%", "without manual review for clean-path cases") which contradicts the mandatory-admin-decision flow — worth fixing before any pitch.
+- Minor: `playwright` sits in frontend `dependencies` rather than `devDependencies`.
+
+---
+
 *New sessions will be appended below.*
