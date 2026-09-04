@@ -2227,4 +2227,20 @@ Also: removed the now-unused `playwright` npm dependency (only the deleted front
 
 ---
 
+## Session 35 — Redesigned architecture diagrams in the README
+
+**Request:** Redesign the architectural diagrams and update the README to match a 3-diagram layout: System Architecture, Sequence Diagram, and Level-1 Data Flow Diagram, with a consistent color code, layered zones, phase grouping, and a legend. The AI-recommends / human-decides rule must be visible.
+
+**Done (README "Architecture" section replaced):**
+- Replaced the old 2-diagram block with **3 mermaid diagrams** plus a legend and a mapping note:
+  1. **System Architecture** (7 layers): Client (Merchant Portal, Admin Dashboard) -> Vercel hosting -> FastAPI API layer -> AI & Processing (OCR Service, Document Matching Engine, Decision Engine) -> 5 External simulated sources -> PostgreSQL data layer (D1-D7) -> Human Review & Decision.
+  2. **Sequence Diagram**: 4 phase blocks (Submission, OCR & Extraction, Verification & Analysis, Human Review & Decision) over 9 lifelines with autonumbering.
+  3. **Level-1 DFD**: External entities E1-E7, processes P1-P7 (circles), data stores D1-D7, with solid data-flow and dashed query/response/notification edges.
+- Color code via mermaid classDef: blue clients, light-blue infra, light-green API, green AI, orange external, pink data, red human.
+- Top rule statement: "the AI recommends, the human decides"; legend below; codebase mapping note (ocr.py / verify.py / decision.py, 5 simulated source tables, logical stores -> real tables).
+
+**Verification:** all mermaid fences balanced (16 = 8 blocks); new blocks have balanced quotes/brackets; the pre-existing ER diagram untouched. Frontend/backend unchanged.
+
+---
+
 *New sessions will be appended below.*
