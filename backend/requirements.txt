@@ -11,3 +11,6 @@ requests>=2.31.0
 python-dotenv>=1.0.0
 alembic>=1.13.0
 psycopg2-binary>=2.9.9
+# PDF → image rasterization for the Groq-vision OCR engine (first page only)
+pypdfium2>=4.28.0
+pillow>=10.0.0

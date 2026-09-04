@@ -10,7 +10,7 @@
 # the stack never wipes accounts or uploaded documents.
 #
 # Usage:
-#   1. Ensure backend/.env has real values (JWT_SECRET_KEY, LLM_API_KEY, OCR_API_KEY)
+#   1. Ensure backend/.env has real values (JWT_SECRET_KEY, LLM_API_KEY)
 #   2. docker-compose up --build
 #   3. Frontend: http://localhost:5173  |  Backend: http://localhost:8000
 #   4. To fully reset: docker-compose down -v && docker-compose up --build

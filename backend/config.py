@@ -42,12 +42,19 @@ class Settings:
     JWT_EXPIRY_MINUTES: int = int(os.getenv("JWT_EXPIRY_MINUTES", "60"))
 
     # --- LLM API (OpenAI-compatible: Groq, OpenAI, etc.) ---
+    # Single Groq key powers BOTH document extraction (vision OCR, see
+    # ocr.py) and LLM cross-verification (verify.py). LLM_MODEL must be
+    # a Groq vision-capable model for extraction to work — the default
+    # qwen/qwen3.8-27b is one (gpt-oss models are text-only on Groq).
     LLM_API_KEY: str = os.getenv("LLM_API_KEY", "")
     LLM_BASE_URL: str = os.getenv("LLM_BASE_URL", "https://api.groq.com/openai/v1")
     LLM_MODEL: str = os.getenv("LLM_MODEL", "qwen/qwen3.8-27b")
-
-    # --- OCR (OCR.space) ---
-    OCR_API_KEY: str = os.getenv("OCR_API_KEY", "")
+    # Optional comma-separated Groq keys from OTHER accounts. Groq rate
+    # limits are per-account, so on a 401/403/429 the OCR layer rotates
+    # to the next key for headroom. Keys on the SAME account add nothing.
+    LLM_FALLBACK_KEYS: list[str] = [
+        k.strip() for k in os.getenv("LLM_FALLBACK_KEYS", "").split(",") if k.strip()
+    ]
 
     # --- CORS ---
     ALLOWED_ORIGINS: list[str] = os.getenv(

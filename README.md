@@ -19,8 +19,8 @@ A merchant signs up, uploads PAN / GST / bank-proof documents, and the system **
 ## ✨ Key Features
 
 ### 🤖 Automated Verification Pipeline
-- **OCR Extraction** — OCR.space API extracts text from PAN, GST, and Bank Proof documents
-- **LLM Cross-Verification** — Groq (LLaMA 3.3) checks consistency of extracted fields across documents
+- **AI Document Extraction** — Groq vision (Qwen 3.8) extracts typed fields directly from PAN, GST, and Bank Proof images
+- **LLM Cross-Verification** — Groq checks consistency of extracted fields across documents
 - **5-Source External Validation** — Government DB, CKYC, Automated Verification, Bank Validation, Compliance Review
 - **Deterministic Decision Engine** — LLM never makes the final call; rules engine decides approve/reject/flag
 
@@ -61,10 +61,10 @@ graph TB
 
     subgraph "⚙️ Backend (FastAPI + Python)"
         D[Auth Service<br/>JWT Tokens] --> E[Document Service<br/>Upload + OCR]
-        E --> F[OCR Engine<br/>OCR.space API]
-        E --> G[Format Validator<br/>PAN/GST/IFSC Regex]
+        E --> F[Document Extraction<br/>Groq Vision (Qwen 3.8)]
+        F --> G[Field Validator<br/>PAN/GST/IFSC]
         G --> H[Decision Engine<br/>Deterministic Rules]
-        H --> I[LLM Verifier<br/>Groq LLaMA 3.3]
+        H --> I[LLM Verifier<br/>Groq Qwen 3.8]
         H --> J[External Checker<br/>5 Verification Sources]
         H --> K[Risk Scorer<br/>Weighted 0-100]
         H --> L[Fraud Detector<br/>Cross-Merchant Check]
@@ -94,19 +94,19 @@ sequenceDiagram
     participant M as 🧑 Merchant
     participant F as 🖥️ Frontend
     participant B as ⚙️ Backend
-    participant OCR as 👁️ OCR.space
+    participant OCR as 👁️ Groq Vision
     participant LLM as 🤖 Groq LLM
     participant DB as 🗄️ Database
     participant A as 👨‍💼 Admin
 
-    Note over M,A: ═══ Phase 1: Document Upload & OCR ═══
+    Note over M,A: ═══ Phase 1: Document Upload & Extraction ═══
 
     M->>F: Upload PAN Card
     F->>B: POST /documents/upload (file + type)
     B->>B: Validate file type/size
     B->>DB: Save document (status: verifying)
-    B->>OCR: Send image for OCR
-    OCR-->>B: Extracted text + confidence
+    B->>OCR: Send document image
+    OCR-->>B: Typed fields (pan_number, name, dob)
     B->>B: Parse fields (PAN#, name, DOB)
     B->>B: Format check (regex match)
     alt OCR found text
@@ -175,8 +175,8 @@ sequenceDiagram
 |-------|-----------|---------|
 | **Frontend** | React 18 + TypeScript, Vite, Tailwind CSS | SPA with monochrome enterprise UI |
 | **Backend** | Python 3.11, FastAPI, SQLAlchemy, Alembic | REST API with async endpoints |
-| **OCR** | OCR.space API | Document text extraction (25K free req/month) |
-| **LLM** | Groq (LLaMA 3.3 / Qwen 3.8) | Cross-document field verification |
+| **Document Extraction** | Groq vision (Qwen 3.8) | Reads PAN/GST/bank images directly into typed fields |
+| **LLM** | Groq (Qwen 3.8) | Cross-document field verification + humanized reasons |
 | **Database** | PostgreSQL (Render) | Merchant records + 5 verification tables |
 | **Auth** | JWT (PyJWT + passlib/bcrypt) | Role-based access (merchant/reviewer/admin) |
 | **Deployment** | Render (backend) + Vercel (frontend) | Free tier hosting |
@@ -303,7 +303,7 @@ merchant-growth-platform/
 │   ├── admin.py               # Admin endpoints
 │   ├── decision.py            # Decision engine + risk scoring
 │   ├── verify.py              # LLM cross-verification
-│   ├── ocr.py                 # OCR.space API wrapper
+│   ├── ocr.py                 # Groq-vision document extraction wrapper
 │   ├── db.py                  # SQLAlchemy models
 │   ├── schemas.py             # Pydantic request/response models
 │   ├── config.py              # Environment variable settings

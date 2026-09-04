@@ -1,5 +1,6 @@
 # Backend Dockerfile
-# OCR via OCR.space API (lightweight — no heavy local OCR dependencies).
+# Document extraction via Groq vision API (lightweight — no heavy local OCR
+# dependencies; pypdfium2 only rasterizes PDF uploads to images).
 FROM python:3.11-slim
 
 WORKDIR /app

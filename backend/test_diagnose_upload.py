@@ -14,14 +14,9 @@ import time
 import traceback
 from pathlib import Path
 
-# Force local SQLite
+# Force local SQLite (real LLM_API_KEY/vision key comes from backend/.env)
 os.environ["DATABASE_URL"] = "sqlite:///./test_diagnose.db"
 os.environ["JWT_SECRET_KEY"] = "test_diagnose_key_1234567890abcdef"
-os.environ["LLM_API_KEY"] = "test_placeholder"
-
-# Ensure OCR key is set
-if "OCR_API_KEY" not in os.environ or not os.environ["OCR_API_KEY"]:
-    os.environ["OCR_API_KEY"] = "K81761733488957"
 
 # Load .env values
 from dotenv import load_dotenv
@@ -61,8 +56,8 @@ def record(name, passed, detail=""):
 
 
 def test_direct_ocr(doc_type, file_path):
-    """Directly call OCR on a file and capture full response."""
-    log(f"\n  --- Direct OCR Test: {doc_type} ({file_path.name}) ---")
+    """Directly run vision extraction on a file and capture the result."""
+    log(f"\n  --- Direct Extraction Test: {doc_type} ({file_path.name}) ---")
     log(f"  File size: {file_path.stat().st_size} bytes")
     
     # Read file to check type
@@ -73,17 +68,14 @@ def test_direct_ocr(doc_type, file_path):
     log(f"  Is PDF: {is_pdf}")
     
     try:
-        # Call OCR directly
-        result = ocr.extract_text(str(file_path))
-        raw_text = " ".join(result.raw_lines)
-        log(f"  OCR result: {len(result.raw_lines)} lines, confidence={result.confidence}")
+        # Call extraction directly (Groq vision)
+        fields, confidence, raw_text = ocr.extract_structured_fields(str(file_path), doc_type)
+        log(f"  Fields: {json.dumps(fields, indent=2)}")
+        log(f"  Confidence: {confidence}")
         log(f"  Raw text (first 500 chars): {raw_text[:500]}")
-        log(f"  All lines:")
-        for i, line in enumerate(result.raw_lines):
-            log(f"    [{i}] {line}")
-        return result
+        return fields, confidence, raw_text
     except Exception as e:
-        log(f"  OCR EXCEPTION: {e}")
+        log(f"  Extraction EXCEPTION: {e}")
         traceback.print_exc()
         return None
 
@@ -254,9 +246,8 @@ def main():
             if file_path.exists():
                 result = test_direct_ocr(doc_type, file_path)
                 if result:
-                    raw_text = " ".join(result.raw_lines)
+                    fields, confidence, raw_text = result
                     test_format_check(raw_text, doc_type)
-                    test_structured_extraction(doc_type, file_path)
             else:
                 log(f"  File not found: {file_path}")
     

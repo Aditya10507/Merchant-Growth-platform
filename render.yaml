@@ -18,13 +18,13 @@ services:
       - key: JWT_SECRET_KEY
         generateValue: true
       - key: LLM_API_KEY
-        sync: false  # Set your Groq API key
+        sync: false  # Groq key — powers BOTH vision OCR and LLM verification
       - key: LLM_BASE_URL
         value: https://api.groq.com/openai/v1
       - key: LLM_MODEL
-        value: qwen/qwen3.8-27b
-      - key: OCR_API_KEY
-        sync: false  # Set your OCR.space API key
+        value: qwen/qwen3.8-27b  # Must stay a Groq vision-capable model
+      - key: LLM_FALLBACK_KEYS
+        sync: false  # Optional: extra Groq keys (other accounts) for OCR headroom
       - key: ALLOWED_ORIGINS
         sync: false  # Set to your Vercel URL after frontend deploy
       - key: TEST_DATASET_DIR

@@ -1809,4 +1809,50 @@ The next deploy log finally showed the true error: `psycopg2.errors.DatatypeMism
 
 ---
 
+## Session 20 — OCR Engine Swap: OCR.space → Groq Vision (September 4, 2026)
+
+### What happened
+The user reported OCR.space still gave false/empty results in manual testing and asked for reliable free OCR options. Research + live benchmarking showed the project's **own Groq model (`qwen/qwen3.8-27b`) is a vision-capable model** (one of only two on Groq per their docs — `qwen/qwen3.6-27b` and `qwen/qwen3.8-27b`), and it extracted every identifier correctly from the exact documents OCR.space garbles. User chose: **drop OCR.space entirely, vision-only.**
+
+### Benchmark evidence (real test documents, before any code change)
+| Merchant | OCR.space result (known) | Groq vision `qwen/qwen3.8-27b` |
+|---|---|---|
+| UJALK5542W (clean) | intermittent empty/garbled (Sessions 16–18) | PAN ✓ GST ✓ IFSC ✓ account ✓ |
+| HAOEL7625O (clean) | empty PAN/GST | PAN ✓ GST ✓ IFSC ✓ account ✓ |
+
+- GST numbers came back format-valid AND PAN-consistent (e.g. `27UJALK5542W1Z5` embeds the PAN, as real GSTINs do).
+- The "name mismatch" seen across documents is *correct*: PAN shows the person (`Baljit Khan`), GST shows the business (`Khan Retail Mart`) — exactly what the LLM cross-verify step judges.
+- **No new signup, no new key family, no credit card** — the project already had the Groq key + OpenAI-compatible client + this exact model configured.
+
+### Groq model-access findings (worth knowing for future sessions)
+- Groq rate limits are **per account/organization, not per key** — three keys on one account add no capacity.
+- `openai/gpt-oss-120b`/`gpt-oss-20b` are **text-only on Groq** — image input fails with `content must be a string`. Only the two qwen models accept images.
+- A key whose project hasn't enabled a model gets `403 model_permission_blocked_project` — enable under Project settings → Limits (console.groq.com/settings/project/limits).
+- The active local key in `backend/.env` (and the one to use on Render) is the account that has `qwen/qwen3.8-27b` enabled.
+
+### Code changes
+| File | Change |
+|---|---|
+| `backend/ocr.py` | **Full rewrite.** `extract_structured_fields()` now sends the document image to Groq vision and gets typed fields back as JSON in one call — no more OCR-text + regex field parsing (the fragile name-guessing and PAN/GST regex heuristics are gone). Retains the same public interface + exceptions so `documents.py` needed **zero changes**: `OcrTemporarilyUnavailableError` (transient → merchant retry) vs `OcrEngineError` (config/usage). Retries with exponential backoff on 429/5xx/network; **multi-key rotation** across `LLM_FALLBACK_KEYS` on 401/403/429. PDF uploads are rasterized (first page → PNG via pypdfium2) to preserve the existing "JPG, PNG, or PDF" contract. Blank/undersized images are detected locally and returned as empty fields → `invalid_format` (retry-in-slot), never a hard API 400 → `rejected`. Empty model responses are retried up to 3× before reporting empty (mirrors the old OCR.space empty-result handling). |
+| `backend/config.py` | Removed `OCR_API_KEY`; added `LLM_FALLBACK_KEYS` (comma-separated keys from OTHER accounts — same-account keys add nothing). Docstring notes LLM_MODEL must stay a Groq vision model. |
+| `backend/requirements.txt` | Added `pypdfium2`, `pillow` (PDF rasterization for the vision engine). |
+| `backend/.env.example` | OCR.space section removed; LLM section documents the vision-model requirement + optional fallback keys. |
+| `render.yaml` | `OCR_API_KEY` env removed; `LLM_FALLBACK_KEYS` added. |
+| `backend/Dockerfile`, `docker-compose.yml`, `README.md` | Comments/stack table updated from OCR.space to Groq vision. |
+| `backend/test_diagnose_upload.py` | Updated to the new API (dropped `extract_text`/`raw_lines`/OCR_API_KEY usage). |
+
+### Verification (local, real API calls + temp SQLite)
+- `py_compile` + full app-module import sweep: clean; removed OCR.space-era symbols confirmed gone.
+- 9/9 real-document extractions through the new `ocr.extract_structured_fields`: UJALK & HAOEL (the two OCR.space-failing merchants) all identifiers exact; RFBPO flagged-merchant extracted (its PAN came back with one O→0 garble — a flagged merchant by design; the 5-source check routes not-found PANs to admin review, never a false approval).
+- End-to-end TestClient flow (signup → 3× upload → merchant `submitted`) through `documents.py`: **6/6 checks passed**. Extracted fields identical to ground truth.
+- 1×1 fake PNG → `invalid_format` + friendly "No readable text" message (retry-in-slot), NOT a hard `rejected` with a raw API error.
+- Real PDF upload → rasterized → PAN extracted correctly.
+- Non-image file → clean `OcrEngineError` (no pointless API retries).
+
+### Notes / limitations
+- Back-to-back image calls can hit Groq's per-minute token budget (each image ≈ 2048 tokens against ~8K/min) — uploads are user-paced so this is rare, and the 429 retry/backoff rescued every case in testing (worst observed ~18s).
+- RFBPO7258K's synthetic PAN image still produces an O→0 garble — safe by design (flagged → admin review), listed as a known data limitation.
+
+---
+
 *New sessions will be appended below.*
