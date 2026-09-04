@@ -99,6 +99,18 @@ export interface CheckResult {
   detail: string;
 }
 
+/** Live admin dashboard summary (Session 26) — mirrors AdminStatsResponse. */
+export interface AdminStats {
+  applicants: number;
+  approvals: number;
+  rejections: number;
+  flagged: number;
+  fraud_ring_flagged: number;
+  processed: number;
+  flagged_rate: number;
+  fraud_ring_rate: number;
+}
+
 export interface ApiErrorBody {
   detail: string;
 }

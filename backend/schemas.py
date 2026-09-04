@@ -182,6 +182,32 @@ class MaintenanceResult(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Live admin dashboard stats (Session 26: real-time summary cards)
+# ---------------------------------------------------------------------------
+
+
+class AdminStatsResponse(BaseModel):
+    """Live summary of the review pipeline, computed fresh on every request.
+
+    Counts exclude archived test merchants (is_test=True) — the dashboard
+    must reflect real applicants only.
+
+    Rates are computed over `processed` — merchants the admin has actually
+    verified (verified_matching + verified_mismatched) — so "% flagged" and
+    "fraud-ring rate" measure the AI's real hit rate, not dilution by
+    un-reviewed pending rows.
+    """
+    applicants: int       # in-review: pending + submitted + verified_*
+    approvals: int        # active (approved by admin)
+    rejections: int       # rejected (by admin or pipeline)
+    flagged: int          # verified_mismatched (routed to human review)
+    fraud_ring_flagged: int  # merchants with a mismatched fraud_ring_* check
+    processed: int        # verified_matching + verified_mismatched
+    flagged_rate: float   # flagged / processed * 100 (0 if none processed)
+    fraud_ring_rate: float  # fraud_ring_flagged / processed * 100
+
+
+# ---------------------------------------------------------------------------
 # Failure-injection demo mode (Feature 1: chaos panel)
 # ---------------------------------------------------------------------------
 

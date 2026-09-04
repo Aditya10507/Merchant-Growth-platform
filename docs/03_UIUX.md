@@ -35,6 +35,11 @@
 
 ## 5. Admin/Reviewer Panel (AdminPage)
 
+### 5.0 Real-time stats dashboard (top strip)
+- Live counters that update **in real time** — the panel polls `GET /admin/stats` every few seconds and refreshes immediately after every verify/approve/reject action.
+- Cards: **Applicants** (pending + submitted + verified), **Approvals** (active merchants), **Rejections**, **Flagged %** (mismatched / flagged over all processed), **Fraud-ring flagged**, and **Fraud-ring rate**.
+- Numbers move the moment data changes — no manual refresh, exactly the state the queue shows.
+
 ### 5.1 Review queue
 - Three simple tabs (Session 26 — the panel is intentionally minimal): **Applicants** (pending/submitted/verified states, one comma-separated status filter), **Active merchants** (approved accounts), **Rejected**.
 - Merchant table: business, status badge, **risk badge**, submitted date; the **View** button opens the detail pane. No engineering cards in the panel — chaos/calibration/health stay as backend endpoints + `/docs` (Session 26).

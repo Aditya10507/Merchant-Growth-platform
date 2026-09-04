@@ -17,6 +17,7 @@ import { memo, useCallback, useEffect, useState } from "react";
 
 import {
   getAdminMerchants,
+  getAdminStats,
   getMerchantDetail,
   verifyApplication,
   decideApplication,
@@ -31,6 +32,7 @@ import { RiskBreakdown } from "../components/RiskBreakdown";
 import { StatusBadge } from "../components/StatusBadge";
 import { VerificationTimeline } from "../components/VerificationTimeline";
 import type {
+  AdminStats,
   AsyncState,
   CheckResult,
   DocumentStatus,
@@ -73,6 +75,61 @@ function formatDate(isoString: string): string {
   });
 }
 
+// ---------------------------------------------------------------------------
+// Live dashboard summary cards (Session 26)
+// ---------------------------------------------------------------------------
+
+const STATS_POLL_MS = 5000;
+
+function StatCard({ label, value, hint, accent }: {
+  label: string;
+  value: string;
+  hint?: string;
+  accent?: "default" | "positive" | "danger";
+}) {
+  const valueClass =
+    accent === "positive"
+      ? "text-gray-900"
+      : accent === "danger"
+        ? "text-gray-900"
+        : "text-gray-900";
+  const ring =
+    accent === "positive"
+      ? "border-l-4 border-l-gray-900"
+      : accent === "danger"
+        ? "border-l-4 border-l-gray-400"
+        : "border-l-4 border-l-gray-200";
+  return (
+    <div className={`rounded-md border border-gray-200 bg-white px-4 py-3 ${ring}`}>
+      <p className="text-xs font-medium uppercase tracking-wide text-gray-500">{label}</p>
+      <p className={`mt-1 text-2xl font-semibold ${valueClass}`}>{value}</p>
+      {hint && <p className="mt-0.5 text-xs text-gray-400">{hint}</p>}
+    </div>
+  );
+}
+
+function StatsDashboard({ stats }: { stats: AdminStats | null }) {
+  if (stats === null) {
+    return (
+      <div className="grid flex-shrink-0 grid-cols-2 gap-3 px-6 pb-3 md:grid-cols-3 xl:grid-cols-6">
+        {Array.from({ length: 6 }).map((_, i) => (
+          <div key={i} className="h-[76px] animate-pulse rounded-md border border-gray-200 bg-gray-50" />
+        ))}
+      </div>
+    );
+  }
+  return (
+    <div className="grid flex-shrink-0 grid-cols-2 gap-3 px-6 pb-3 md:grid-cols-3 xl:grid-cols-6">
+      <StatCard label="Applicants" value={String(stats.applicants)} hint="pending & in review" />
+      <StatCard label="Approvals" value={String(stats.approvals)} hint="active merchants" accent="positive" />
+      <StatCard label="Rejections" value={String(stats.rejections)} hint="declined applications" accent="danger" />
+      <StatCard label="Flagged" value={stats.processed > 0 ? `${stats.flagged} (${stats.flagged_rate}%)` : "—"} hint={`of ${stats.processed} verified`} accent="danger" />
+      <StatCard label="Fraud ring" value={stats.processed > 0 ? `${stats.fraud_ring_flagged} (${stats.fraud_ring_rate}%)` : "—"} hint={`of ${stats.processed} verified`} accent="danger" />
+      <StatCard label="Fraud rate" value={stats.processed > 0 ? `${stats.fraud_ring_rate}%` : "—"} hint={`${stats.fraud_ring_flagged} flagged`} accent="danger" />
+    </div>
+  );
+}
+
 function AdminPageBase() {
   const [activeTab, setActiveTab] = useState<TabId>("applicants");
   const [listState, setListState] = useState<AsyncState<MerchantSummary[]>>({ status: "idle" });
@@ -81,8 +138,30 @@ function AdminPageBase() {
   const [verifyState, setVerifyState] = useState<AsyncState<MerchantDetail>>({ status: "idle" });
   const [resolveNote, setResolveNote] = useState<string>("");
   const [resolveState, setResolveState] = useState<AsyncState<MerchantSummary>>({ status: "idle" });
+  // Live dashboard summary (Session 26) — refreshed on mount, on every
+  // verify/decide, and by a 5s poll so the numbers stay current.
+  const [stats, setStats] = useState<AdminStats | null>(null);
+  const [statsError, setStatsError] = useState<string | null>(null);
 
   const activeTabDef = TABS.find((t) => t.id === activeTab) ?? TABS[0];
+
+  const fetchStats = useCallback(async () => {
+    try {
+      const data = await getAdminStats();
+      setStats(data);
+      setStatsError(null);
+    } catch (error) {
+      setStatsError(error instanceof ApiError ? error.message : "Could not load stats.");
+    }
+  }, []);
+
+  // Load immediately + keep in sync via polling (real-time after any
+  // change made anywhere — even by another admin session).
+  useEffect(() => {
+    fetchStats();
+    const timer = setInterval(fetchStats, STATS_POLL_MS);
+    return () => clearInterval(timer);
+  }, [fetchStats]);
 
   const fetchMerchants = useCallback(async (tab: TabId) => {
     const def = TABS.find((t) => t.id === tab) ?? TABS[0];
@@ -127,13 +206,14 @@ function AdminPageBase() {
       setVerifyState({ status: "success", data: result });
       await selectMerchant(selectedMerchantId);
       await fetchMerchants(activeTab);
+      await fetchStats();
     } catch (error) {
       setVerifyState({
         status: "error",
         message: error instanceof ApiError ? error.message : "Verification failed. Please try again.",
       });
     }
-  }, [selectedMerchantId, activeTab, selectMerchant, fetchMerchants]);
+  }, [selectedMerchantId, activeTab, selectMerchant, fetchMerchants, fetchStats]);
 
   const handleDecide = useCallback(
     async (decision: "approved" | "rejected") => {
@@ -144,15 +224,15 @@ function AdminPageBase() {
         setResolveState({ status: "success", data: result });
         await selectMerchant(selectedMerchantId);
         await fetchMerchants(activeTab);
-        setResolveNote("");
-      } catch (error) {
-        setResolveState({
-          status: "error",
-          message: error instanceof ApiError ? error.message : "Could not submit decision.",
-        });
-      }
-    },
-    [selectedMerchantId, resolveNote, activeTab, selectMerchant, fetchMerchants]
+        await fetchStats();
+        setResolveNote("");    } catch (error) {
+      setResolveState({
+        status: "error",
+        message: error instanceof ApiError ? error.message : "Could not submit decision.",
+      });
+    }
+  },
+    [selectedMerchantId, resolveNote, activeTab, selectMerchant, fetchMerchants, fetchStats]
   );
 
   const closeDetail = useCallback(() => {
@@ -178,6 +258,14 @@ function AdminPageBase() {
             </p>
           </div>
         </div>
+
+        {/* Live dashboard summary — pinned, refreshes in real time */}
+        {statsError && (
+          <div className="px-6 pb-2">
+            <Alert variant="error">{statsError}</Alert>
+          </div>
+        )}
+        <StatsDashboard stats={stats} />
 
         {/* Tabs — pinned */}
         <div className="flex flex-shrink-0 items-center gap-2 px-6 pb-4">

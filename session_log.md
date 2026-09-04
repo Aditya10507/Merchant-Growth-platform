@@ -2111,4 +2111,19 @@ Also: removed the now-unused `playwright` npm dependency (only the deleted front
 
 ---
 
+## Session 27 — Real-time admin dashboard + chaos-panel removal
+
+**Request:** Remove the "Failure-injection demo" card from the admin panel and add a fully functional real-time stats dashboard (applicants, approvals, rejections, fraud-ring rate, flagged %).
+
+**Done:**
+- The chaos panel was already absent from the UI (Session 26 rewrite); this session confirmed that and focused on the dashboard.
+- **Backend `GET /admin/stats`** (admin-only, 403 for merchants) — live-computed from the DB, no caching: applicants (pending/submitted/verified), approvals (active), rejections, fraud-ring flagged, flagged count (verified_mismatched), processed, flagged %, fraud-ring rate.
+- **Frontend**: stats strip of cards at the top of AdminPage — polls `/admin/stats` every 5s and refreshes after every verify/approve/reject action, so numbers move in real time.
+- **Tests**: Feature 9 — 403 for non-admin, shape/type checks, approvals +1 after an approve decision, fraud-ring mismatch counted after a mismatched decision (76 checks total).
+- **Docs**: KNOWLEDGE (76 checks, AdminPage row), UIUX (5.0 stats strip section), README (feature section + `/admin/stats` API row).
+
+**Verification:** offline suite **76/76** · frontend `tsc -b` + `vite build` clean.
+
+---
+
 *New sessions will be appended below.*

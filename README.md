@@ -55,6 +55,10 @@ A merchant signs up, uploads PAN / GST / bank-proof documents, and the system **
 - **Batch Test Report** — `/admin/batch-test` runs accuracy metrics across the seeded synthetic ground-truth records
 - **Full API Documentation** — Swagger UI at `/docs` for every endpoint
 
+### 📊 Real-Time Admin Dashboard
+- **Live stats strip** — applicants / approvals / rejections / fraud-ring flagged / flagged % / fraud-ring rate, updated automatically (polls `/admin/stats`) and refreshing the moment any decision changes the data
+- **Simple three-tab review queue** — Applicants / Active merchants / Rejected; no engineering cards cluttering the panel (chaos/calibration/health stay as backend endpoints)
+
 ### 🧨 Failure-Injection Demo (chaos panel — via `/docs`)
 - **Simulated outages, real recovery paths** — the admin toggles OCR/LLM/external-source outages via the API (`/docs`, `faults.py`) and watches the system degrade exactly as it would in production (retry-friendly uploads, deferred verification, audit-logged reasons). Kept out of the admin UI on purpose — the panel stays a simple review queue (Session 26).
 - **Process-local & self-healing** — toggles reset on restart, so a demo can never get stuck; every toggle is written to the admin's audit trail
@@ -274,6 +278,7 @@ docker-compose up --build
 | `/documents/upload?doc_type=PAN` | POST | Merchant | Upload document |
 | `/documents/merchant-status` | GET | Merchant | Full onboarding status |
 | `/documents/restart-application` | POST | Merchant | Restart after rejection |
+| `/admin/stats` | GET | Admin | Real-time dashboard counters (applicants, approvals, rejections, fraud-ring, flagged %) |
 | `/admin/merchants` | GET | Admin | List all merchants |
 | `/admin/merchants/:id` | GET | Admin | Merchant detail + audit trail |
 | `/admin/merchants/:id/verify` | POST | Admin | Run verification pipeline |

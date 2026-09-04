@@ -37,6 +37,7 @@ import documents as documents_module
 import verify
 from db import AuditLog, Document, Merchant, get_db
 from schemas import (
+    AdminStatsResponse,
     AuditLogEntryResponse,
     BatchTestReport,
     ClassScoreStatsResponse,
@@ -117,6 +118,74 @@ def list_merchants(
         # necessarily low-risk, it just hasn't been checked yet.
         merchants.sort(key=lambda m: (m.risk_score is None, -(m.risk_score or 0)))
     return [_merchant_to_summary(m) for m in merchants]
+
+
+@router.get("/stats", response_model=AdminStatsResponse)
+def get_admin_stats(
+    db: Session = Depends(get_db),
+    _admin: Merchant = Depends(require_role("admin")),
+) -> AdminStatsResponse:
+    """
+    Live dashboard summary for the admin panel — computed fresh from the
+    DB on every request, so the numbers are always current (the panel
+    polls this endpoint and also refreshes after every verify/decide).
+
+    Excludes archived test merchants (is_test=True). Rates are measured
+    over PROCESSED merchants (verified_matching + verified_mismatched) so
+    "% flagged" and "fraud-ring rate" reflect real verification outcomes
+    rather than being diluted by un-reviewed pending rows.
+    """
+    merchants = db.query(Merchant).filter(
+        Merchant.role == "merchant", Merchant.is_test == False
+    ).all()
+
+    applicants = 0
+    approvals = 0
+    rejections = 0
+    verified_matching = 0
+    verified_mismatched = 0
+    fraud_ring_flagged = 0
+
+    for m in merchants:
+        status = m.onboarding_status
+        if status in ("pending", "submitted", "verified_matching", "verified_mismatched"):
+            applicants += 1
+        elif status == "active":
+            approvals += 1
+        elif status == "rejected":
+            rejections += 1
+
+        if status == "verified_matching":
+            verified_matching += 1
+        elif status == "verified_mismatched":
+            verified_mismatched += 1
+
+        # Fraud-ring signal: any mismatched check whose name starts with
+        # fraud_ring_ (shared PAN / bank account across applicants).
+        if m.mismatched_checks:
+            try:
+                checks = _json.loads(m.mismatched_checks)
+            except (ValueError, TypeError):
+                checks = []
+            if any(
+                isinstance(c, dict)
+                and str(c.get("check_name", "")).startswith("fraud_ring_")
+                and c.get("matched") is False
+                for c in checks
+            ):
+                fraud_ring_flagged += 1
+
+    processed = verified_matching + verified_mismatched
+    return AdminStatsResponse(
+        applicants=applicants,
+        approvals=approvals,
+        rejections=rejections,
+        flagged=verified_mismatched,
+        fraud_ring_flagged=fraud_ring_flagged,
+        processed=processed,
+        flagged_rate=round(verified_mismatched / processed * 100, 1) if processed else 0.0,
+        fraud_ring_rate=round(fraud_ring_flagged / processed * 100, 1) if processed else 0.0,
+    )
 
 
 @router.get("/merchants/{merchant_id}", response_model=MerchantDetailResponse)

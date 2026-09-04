@@ -572,6 +572,74 @@ def main() -> None:
         ocr_module.extract_structured_fields = real_extract
 
     print()
+    print("Feature 9 — live admin dashboard stats")
+    print("-" * 50)
+    # /admin/stats must reflect the queue in real time and be admin-only.
+    r = client.get("/admin/stats", headers=MH)
+    check("merchant denied stats (403)", r.status_code == 403)
+    r = client.get("/admin/stats", headers=AH)
+    check("admin stats returns 200", r.status_code == 200)
+    body = r.json()
+    check("stats shape complete",
+          all(k in body for k in ("applicants", "approvals", "rejections",
+                                  "flagged", "fraud_ring_flagged", "processed",
+                                  "flagged_rate", "fraud_ring_rate")))
+    check("counts are non-negative ints",
+          all(isinstance(body[k], int) and body[k] >= 0 for k in
+              ("applicants", "approvals", "rejections", "flagged",
+               "fraud_ring_flagged", "processed")))
+    check("rates are floats",
+          isinstance(body["flagged_rate"], float) and isinstance(body["fraud_ring_rate"], float))
+
+    # Stats move after a decision: approve a fresh verifiable merchant and
+    # confirm approvals +1, applicants -1. Uses a PAN/account NO other test
+    # merchant shares (AAAAA1015A, seeded but unused) so the fraud-ring scan
+    # stays clean and the merchant verifies as matching.
+    before = client.get("/admin/stats", headers=AH).json()
+    stats_clean_fields = {
+        "PAN": {"pan_number": "AAAAA1015A", "name": "Test Merchant 15", "dob": "1990-01-01"},
+        "GST": {"gst_number": "27AAAAA1015A1Z5", "name": "Test Merchant 15"},
+        "BANK_PROOF": {"account_number": "100000000015", "ifsc": "HDFC0001234",
+                        "name": "Test Merchant 15"},
+    }
+    mid5 = make_submitted_merchant("Stats Case", stats_clean_fields, "stats_case")
+    verify.cross_verify_documents = lambda fields: LlmVerificationResult(
+        overall_consistent=True, findings=[], summary="All consistent")
+    r = client.post(f"/admin/merchants/{mid5}/verify", headers=RH)
+    verify.cross_verify_documents = orig_llm2
+    check("stats-case merchant verified_matching",
+          r.status_code == 200 and r.json()["onboarding_status"] == "verified_matching",
+          f"HTTP {r.status_code}: {r.text[:200]}")
+    r = client.post(f"/admin/merchants/{mid5}/decide", headers=AH,
+                    json={"decision": "approved"})
+    check("stats-case approved", r.status_code == 200, f"HTTP {r.status_code}: {r.text[:200]}")
+    after = client.get("/admin/stats", headers=AH).json()
+    check("approvals incremented after decision", after["approvals"] == before["approvals"] + 1,
+          f"{before['approvals']} -> {after['approvals']}")
+
+    # Fraud-ring detection: give one merchant a stored fraud_ring_* mismatch
+    # and confirm fraud_ring_flagged increments.
+    db = SessionLocal()
+    m_fraud = Merchant(business_name="Fraud Ring Stats", email="fraud_stats@test.com",
+                       password_hash=hash_password("TestPass123"), role="merchant",
+                       onboarding_status="verified_mismatched", is_test=False,
+                       mismatched_checks=json.dumps([
+                           {"check_name": "fraud_ring_pan", "document_type": "PAN",
+                            "matched": False, "detail": "PAN shared with 2 other applicants"},
+                           {"check_name": "govt_database", "document_type": "PAN",
+                            "matched": False, "detail": "No government record found"},
+                       ]))
+    db.add(m_fraud)
+    db.commit()
+    db.close()
+    r = client.get("/admin/stats", headers=AH)
+    body = r.json()
+    check("fraud-ring mismatch counted", body["fraud_ring_flagged"] >= 1)
+    check("flagged count includes mismatched merchant", body["flagged"] >= 1)
+    check("rates computed over processed set",
+          body["processed"] > 0 and 0.0 <= body["fraud_ring_rate"] <= 100.0)
+
+    print()
     print("=" * 50)
     print(f"RESULT: {PASS} passed, {FAIL} failed")
     sys.exit(1 if FAIL else 0)

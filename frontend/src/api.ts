@@ -9,6 +9,7 @@
 
 import { API_BASE_URL } from "./constants";
 import type {
+  AdminStats,
   ApiErrorBody,
   AuthResponse,
   DocumentStatus,
@@ -110,6 +111,11 @@ export function getAdminMerchants(statusFilter?: string, sortByRisk?: boolean): 
   if (sortByRisk) params.set("sort_by_risk", "true");
   const query = params.toString() ? `?${params.toString()}` : "";
   return request<MerchantSummary[]>(`/admin/merchants${query}`);
+}
+
+/** Live dashboard summary (applicants / approvals / rejections / rates). */
+export function getAdminStats(): Promise<AdminStats> {
+  return request<AdminStats>("/admin/stats");
 }
 
 /** Returns full detail for a single merchant, including documents + audit trail. */
