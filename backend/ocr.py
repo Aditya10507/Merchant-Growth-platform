@@ -203,14 +203,16 @@ def _downscale_and_encode(mime: str, image_bytes: bytes) -> tuple[str, bytes]:
     """Shrinks an image to fit the OCR max dimension and re-encodes it as
     JPEG before it is sent to the vision model.
 
-    Why: Groq vision bills tokens by image resolution, so a phone photo
-    or high-res scan costs several × more tokens than the model needs to
-    read the text — which both slows each extraction AND exhausts the
-    per-minute/day budget after 2-3 back-to-back uploads (the user-visible
-    "temporarily unavailable" failure). Downscaling to the configured max
-    dimension (OCR_MAX_IMAGE_DIMENSION, 1024px default) and JPEG encoding
-    keeps text crisp (KYC fields are large print) while cutting tokens
-    and payload several-fold for typical phone photos.
+    Why: this is a latency/bandwidth optimization, not a token saver.
+    Empirically (Sept 4) Groq charges a FIXED ~2113 tokens per vision
+    call regardless of resolution or detail level (verified at 300-1000px
+    + detail=low), so the 200K/day quota is a hard ~83-call ceiling per
+    account — the ONLY scaling lever is LLM_FALLBACK_KEYS on other
+    accounts. Downscaling oversized phone photos to the configured max
+    dimension (OCR_MAX_IMAGE_DIMENSION, 1024px default) + JPEG encoding
+    still helps each request upload/pre-process faster (smaller payload),
+    while keeping text crisp (KYC fields are large print). Images already
+    under the cap pass through untouched to avoid pointless re-encode.
 
     Best-effort by design: any decode/encode problem falls back to the
     original bytes so a preprocessing bug can never reject a document.

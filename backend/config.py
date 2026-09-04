@@ -71,12 +71,15 @@ class Settings:
     UPLOAD_DIR: Path = Path(__file__).parent / "uploaded_documents"
 
     # --- OCR/vision latency + rate-limit tuning (ocr.py) ---
-    # Groq vision bills tokens by image resolution, so oversized photos
-    # cost several × more than needed and blow the per-minute budget
-    # when several documents are uploaded back-to-back. Images are
-    # downscaled (long edge cap) and re-encoded to JPEG before the call:
-    # fewer tokens per call → faster responses AND more uploads fit the
-    # minute budget without 429s. OCR_MAX_IMAGE_DIMENSION=0 disables.
+    # Empirically (Sept 4) Groq charges a FIXED ~2113 tokens per vision
+    # call for this model REGARDLESS of image resolution or detail level
+    # (verified at 300-1000px) — so downscaling does NOT stretch the
+    # 200K-token daily quota (~83 uploads/day/account). Its real value
+    # is payload/encode time: smaller images upload and pre-process
+    # faster. Images are downscaled (long-edge cap) + JPEG-encoded before
+    # the call purely as a latency optimization; OCR_MAX_IMAGE_DIMENSION=0
+    # disables it. Budget headroom beyond one account comes ONLY from
+    # LLM_FALLBACK_KEYS on other accounts.
     OCR_MAX_IMAGE_DIMENSION: int = int(os.getenv("OCR_MAX_IMAGE_DIMENSION", "1024"))
     OCR_JPEG_QUALITY: int = int(os.getenv("OCR_JPEG_QUALITY", "90"))
     # PDF first page is rasterized at this scale before the same pipeline.

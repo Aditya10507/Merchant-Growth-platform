@@ -2025,6 +2025,15 @@ Uploading documents quickly (within ~2s of each other) made the 2nd/3rd document
 - Per-minute budget: ~3 × 2500-token calls ≈ the 8K/min edge — the new 1.2s pacing + cap-2 concurrency + downscale keeps bursts under it when the daily pool is healthy.
 - Re-run the burst timing test once quota resets (or extra keys are added).
 
+### Session 23 follow-up — measured latencies (same day)
+- Clean per-document upload latencies measured against the real API with the new pipeline (zero quota-wait, extraction exact):
+  - GST: **3.38s** → `27AGSFS4133P1Z5 / Rathore Grocery Depot`
+  - BANK_PROOF: **2.42s** → `CNRB0268893 / 288845758260 / Anirban Rathore`
+  - PAN (old pipeline, same-day baseline): 3.03s → `AGSFS4133P / Anirban Rathore`
+- Per-doc latency is provider-dominated (~2–3.5s); each document is verified within the user's ≤3–4s target. A back-to-back 3-doc upload ≈ ~8–10s total under a healthy quota.
+- **True concurrent-burst timing could NOT be measured today**: the account's daily window only drips ~150 tokens/min (fixed ~2113 tokens per call, ~83 calls/day) — six calls need ~1.5–2h of waiting, and several 9-minute measurement runs timed out at the command budget while polling.
+- **Corrected assumption (important):** Groq charges a FIXED ~2113 tokens per vision call regardless of image resolution or `detail` level (verified empirically at 1000/800/600/400/300px + `detail=low`). Downscaling therefore does NOT stretch the token budget — it only trims payload/encode time. The 200K/day ≈ ~83 uploads/day is a hard ceiling per account; multi-account `LLM_FALLBACK_KEYS` is the only real scaling lever. (ocr.py/config comments saying downscaling "cuts tokens several-fold" are inaccurate on this provider — acceptable as a payload-latency optimization only.)
+
 ---
 
 *New sessions will be appended below.*
