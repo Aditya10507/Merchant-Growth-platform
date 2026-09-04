@@ -2126,4 +2126,18 @@ Also: removed the now-unused `playwright` npm dependency (only the deleted front
 
 ---
 
+## Session 28 — Submission polish: track label, performance evidence, CI
+
+**Request:** Execute the quick wins from the self-evaluation (target +10 points): track label fix, README metrics, CI, performance evidence doc.
+
+**Done:**
+- **Track label fixed**: README header now says **AI Risk Manager** track (was "Growth Track") — the project is submitted under AI Risk Manager.
+- **`docs/PERFORMANCE.md`** (new): measured latency table (PAN 2.92s / GST 1.98s / BANK_PROOF 2.41s), batch accuracy 100% (25 labeled, 0 false approvals), reliability matrix (quota rotation, self-heal, deferral, concurrency, injection), honest constraints (fixed ~2,113 tokens/vision call, simulated sources, process-local state).
+- **README metrics section**: "Measured Performance" table under Live Demo + CI badge + link to PERFORMANCE.md.
+- **GitHub Actions CI** (`.github/workflows/ci.yml`, new): backend job (setup-python 3.11, pip install, `compileall`, offline suite 76 checks) + frontend job (npm ci, typecheck, build). Verified locally: compileall OK, suite 76/76 in a clean env (no .env — CI-safe since `test_features.py` overrides DATABASE_URL to throwaway SQLite), typecheck + build clean, YAML parses.
+
+**Verification:** offline suite **76/76** · compileall clean · `tsc -b` + `vite build` clean · YAML valid · working tree staged (README, .github/, docs/PERFORMANCE.md).
+
+---
+
 *New sessions will be appended below.*

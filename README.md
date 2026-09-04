@@ -1,6 +1,6 @@
 # 🏦 Merchant Onboarding Copilot
 
-> **Automated KYC verification pipeline for merchant onboarding** — built for the Razorpay AI Buildathon 2026 (Growth Track).
+> **Automated KYC verification pipeline for merchant onboarding** — built for the Razorpay AI Buildathon 2026 (**AI Risk Manager** track): identify, assess, prioritize, and explain merchant risk.
 
 A merchant signs up, uploads PAN / GST / bank-proof documents, and the system **extracts, cross-verifies, and validates** them against 5 simulated external data sources plus a cross-merchant fraud-ring scan. It produces a structured, weighted risk score and a full audit trail — and a **human admin makes the mandatory final approve/reject decision**. No merchant is ever activated by automation alone (a deliberate human-in-the-loop compliance design).
 
@@ -13,6 +13,17 @@ A merchant signs up, uploads PAN / GST / bank-proof documents, and the system **
 | **Frontend** | [merchant-growth-platform-stct.vercel.app](https://merchant-growth-platform-stct.vercel.app) |
 | **Backend API** | [merchant-growth-platform.onrender.com](https://merchant-growth-platform.onrender.com) |
 | **API Docs (Swagger)** | [merchant-growth-platform.onrender.com/docs](https://merchant-growth-platform.onrender.com/docs) |
+
+### 📈 Measured Performance (live, real API — not mocked)
+
+| Metric | Value |
+|---|---|
+| Document verification latency (PAN / GST / Bank Proof) | **2.92s / 1.98s / 2.41s** — every doc verified in ≤ 3–4s, exact extractions |
+| Batch accuracy (`/admin/batch-test`, 25 labeled merchants) | **100%** — 0 false approvals, 0 unresolved exceptions |
+| Offline feature suite | **76/76 checks** (concurrency race, injection defense, quota recovery, self-healing OCR, admin stats) |
+| Quota-exhaustion recovery | 3-key `LLM_FALLBACK_KEYS` rotation pool — live-tested with the primary key fully exhausted |
+
+Full methodology, baseline runs, and honest constraints: **[docs/PERFORMANCE.md](docs/PERFORMANCE.md)** · CI status: [![CI](https://github.com/Aditya10507/Merchant-Growth-platform/actions/workflows/ci.yml/badge.svg)](https://github.com/Aditya10507/Merchant-Growth-platform/actions/workflows/ci.yml)
 
 ---
 
