@@ -2034,6 +2034,12 @@ Uploading documents quickly (within ~2s of each other) made the 2nd/3rd document
 - **True concurrent-burst timing could NOT be measured today**: the account's daily window only drips ~150 tokens/min (fixed ~2113 tokens per call, ~83 calls/day) — six calls need ~1.5–2h of waiting, and several 9-minute measurement runs timed out at the command budget while polling.
 - **Corrected assumption (important):** Groq charges a FIXED ~2113 tokens per vision call regardless of image resolution or `detail` level (verified empirically at 1000/800/600/400/300px + `detail=low`). Downscaling therefore does NOT stretch the token budget — it only trims payload/encode time. The 200K/day ≈ ~83 uploads/day is a hard ceiling per account; multi-account `LLM_FALLBACK_KEYS` is the only real scaling lever. (ocr.py/config comments saying downscaling "cuts tokens several-fold" are inaccurate on this provider — acceptable as a payload-latency optimization only.)
 
+### Session 23 follow-up 2 — multi-account fallback keys wired + rotation proven (same day)
+- User provided two additional Groq keys; added to `backend/.env` as `LLM_FALLBACK_KEYS` (gitignored — never committed). Primary + 2 fallback accounts = **3× the 200K/day budget**; code already rotates on 429/401/403.
+- End-to-end proof with the PRIMARY key exhausted (daily quota): all 3 documents uploaded and extracted EXACTLY via rotation in one back-to-back run:
+  - PAN **2.92s** (`AGSFS4133P / Anirban Rathore / 26/11/2001`) · GST **1.98s** (`27AGSFS4133P1Z5 / Rathore Grocery Depot`) · BANK_PROOF **2.41s** (`CNRB0268893 / 288845758260 / Anirban Rathore`) — all under the ≤3–4s target, no "temporarily unavailable".
+- ⚠️ **Live-site caveat:** Render does NOT read `backend/.env` — the user must add `LLM_FALLBACK_KEYS=gsk_...,gsk_...` to the Render service's Environment variables for the deployed site to benefit.
+
 ---
 
 *New sessions will be appended below.*
