@@ -42,7 +42,7 @@ Full design context:
 | `ocr.py` | **Groq vision (qwen)** document-extraction wrapper — typed JSON fields per doc type, retries + backoff + multi-key rotation, PDF rasterization (pypdfium2), blank-image guard. Exposes `extract_structured_fields()`; callers never touch the provider. |
 | `verify.py` | LLM calls (Groq/OpenAI-compatible, same key as OCR): `cross_verify_documents` (strict JSON findings), `humanize_reason`, `generate_rejection_cause` — all rephrase-only, never decide/invent. |
 | `decision.py` | The deterministic Decision Engine: `check_external_sources` (all 5, no short-circuit), `check_shared_identifiers` (fraud-ring PAN + bank), `compute_risk_score` (single source of truth for scoring), per-document `evaluate` (OCR-confidence path). |
-| `documents.py` | Merchant upload/status endpoints; instant per-document format check; sync OCR with retry-friendly `temporarily_unavailable`; sets `submitted` when all 3 docs are valid; `merchant-status` returns docs **newest-first** (so a stale older upload can never shadow the latest one in the UI); restart-application. |
+| `documents.py` | Merchant upload/status endpoints; instant per-document format check; sync OCR with retry-friendly `temporarily_unavailable`; sets `submitted` when all 3 docs are valid; **re-upload retires the previous same-type doc** (no pile-up); `merchant-status` returns docs **newest-first** AND **self-heals `temporarily_unavailable` docs** by re-running OCR after `OCR_STATUS_RETRY_COOLDOWN_SECONDS` (so a transient outage recovers automatically once budget returns); restart-application. |
 | `admin.py` | Reviewer/admin endpoints: merchant list/detail, `verify_application`, `decide_application` (concurrency-safe), batch-test, maintenance archive, chaos-fault endpoints, risk-eval, system-health. |
 | `faults.py` | In-memory demo fault toggles (`ocr_down`, `llm_down`, `sources_down`) — process-local, reset on restart (ADR-007). |
 | `health.py` | In-memory sliding-window metrics (OCR/LLM success + latency, HTTP statuses) feeding the system-health view (ADR-007). |
@@ -50,7 +50,7 @@ Full design context:
 | `injection_guard.py` | Scans merchant-supplied document text for prompt-injection payloads before it reaches the LLM; redacts flagged values. |
 | `main.py` | FastAPI app wiring only (CORS, routers, request-metrics middleware, startup lifespan, test-dataset zip). |
 | `seed.py` | Seeds the 5 simulated tables, reviewer/admin demo accounts, and **25 ground-truth labeled merchants** (`expected_outcome` audit entries). |
-| `test_features.py` | **Offline E2E suite (59 checks)** via TestClient + throwaway SQLite — covers chaos faults, deferral, calibration, injection defense, concurrency, health, maintenance-archive safety. Run `python test_features.py` from `backend/`. |
+| `test_features.py` | **Offline E2E suite (65 checks)** via TestClient + throwaway SQLite — covers chaos faults, deferral, calibration, injection defense, concurrency, health, maintenance-archive safety, re-upload retirement, comma-separated status filter, self-healing OCR retry. Run `python test_features.py` from `backend/`. |
 
 **Known constraints:** `passlib==1.7.4` requires `bcrypt==4.0.1` pinned exactly (newer bcrypt breaks passlib). Groq's free tier is ~200K tokens/day **shared by OCR + LLM**; `LLM_FALLBACK_KEYS` from *other* Groq accounts rotate on 401/403/429 (same-account keys add nothing). Extraction requires a vision-capable model (`qwen/qwen3.8-27b` default; gpt-oss models are text-only on Groq).
 
@@ -58,14 +58,14 @@ Full design context:
 
 | File/folder | Responsibility |
 |---|---|
-| `types.ts` | Every shared TypeScript type (mirrors backend schemas incl. chaos/calibration/health payloads). No `any`. |
+| `types.ts` | Every shared TypeScript type (mirrors backend schemas). No `any`. |
 | `constants.ts` | API URL, doc slot definitions, `STATUS_LABELS`, `ACTION_LABELS`, `RISK_LEVEL_THRESHOLDS`. |
 | `api.ts` | The only file that calls `fetch`. Typed functions per endpoint; components never call the backend directly. |
 | `AuthContext.tsx` | Session state (JWT + merchant info) via React context. |
 | `components/` | Memoized, accessible pieces: `Button`, `InputField`, `Alert`, `StatusBadge`, `DocumentSlot`, `Layout` (sidebar shell), `RiskBadge`, `RiskBreakdown`, `VerificationTimeline`. |
 | `pages/AuthPage.tsx` | Signup/login toggle with demo quick-fill accounts. |
 | `pages/DashboardPage.tsx` | Merchant dashboard: 3 document slots, status polling (4s), rejection/restart and activated states. |
-| `pages/AdminPage.tsx` | Admin/reviewer panel: fixed-viewport dashboard (page never scrolls — queue table + detail pane scroll internally) with status tabs + merchant table (risk badge), detail panel with verify/decide actions + structured checks + audit trail, and admin-only cards: chaos panel, risk calibration, archive-test-merchants. |
+| `pages/AdminPage.tsx` | Admin/reviewer panel: fixed-viewport dashboard (page never scrolls — queue table + detail pane scroll internally) with THREE simple tabs (Applicants / Active merchants / Rejected, driven by a comma-separated `status_filter`), a merchant table (risk badge), and a stationary detail pane: verify documents → fraud-ring analysis + verification checks + risk breakdown → accept/reject (decision message flows to the merchant dashboard). No engineering cards in the UI — chaos/calibration/health stay as backend endpoints + API docs. |
 | `App.tsx` | Role-based routing: reviewer/admin → AdminPage, merchant → DashboardPage, no session → AuthPage. |
 
 **Client-side document-type validation is deliberately limited.** The frontend only checks file type/size before upload; real "is this actually a PAN?" validation requires OCR server-side. Don't fake it in the browser.

@@ -13,14 +13,9 @@ import type {
   AuthResponse,
   DocumentStatus,
   DocumentType,
-  FaultName,
-  FaultState,
-  MaintenanceResult,
   MerchantDetail,
   MerchantStatus,
   MerchantSummary,
-  RiskEvalReport,
-  SystemHealth,
 } from "./types";
 
 export class ApiError extends Error {
@@ -142,54 +137,3 @@ export function decideApplication(
   });
 }
 
-/**
- * Admin-only maintenance: archives merchants created by E2E test runs
- * (those without ground-truth expected_outcome records) so the batch-test
- * accuracy report and the review queue read correctly.
- */
-export function clearTestMerchants(): Promise<MaintenanceResult> {
-  return request<MaintenanceResult>("/admin/maintenance/clear-test-merchants", {
-    method: "POST",
-  });
-}
-
-// ---------------------------------------------------------------------------
-// Feature 1: failure-injection demo mode (chaos panel, admin-only)
-// ---------------------------------------------------------------------------
-
-/** Current state of the demo fault toggles. */
-export function getFaultState(): Promise<FaultState> {
-  return request<FaultState>("/admin/faults");
-}
-
-/** Enables or disables one demo fault, e.g. setFault("llm_down", true). */
-export function setFault(fault: FaultName, enabled: boolean): Promise<FaultState> {
-  return request<FaultState>(`/admin/faults/${fault}`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ enabled }),
-  });
-}
-
-/** Clears every demo fault at once — the panic button for the demo. */
-export function resetFaults(): Promise<FaultState> {
-  return request<FaultState>("/admin/faults/reset", { method: "POST" });
-}
-
-// ---------------------------------------------------------------------------
-// Feature 2: empirical risk-weight calibration (admin-only)
-// ---------------------------------------------------------------------------
-
-/** Runs the calibration report measuring the current weights on labeled data. */
-export function runRiskEval(): Promise<RiskEvalReport> {
-  return request<RiskEvalReport>("/admin/risk-eval", { method: "POST" });
-}
-
-// ---------------------------------------------------------------------------
-// Feature 4: live system health (admin-only)
-// ---------------------------------------------------------------------------
-
-/** Rolling system-health snapshot (OCR/LLM success rates, latencies, request errors). */
-export function getSystemHealth(): Promise<SystemHealth> {
-  return request<SystemHealth>("/admin/system-health");
-}

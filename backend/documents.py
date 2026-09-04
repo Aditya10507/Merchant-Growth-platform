@@ -347,6 +347,20 @@ async def upload_document(
     _validate_upload(file)
     file_path = _save_upload(file, merchant.id, doc_type)
 
+    # Re-upload replaces the previous attempt of the same type: retire
+    # any earlier ACTIVE document of this type (soft-delete, is_active
+    # False — rows stay in the audit trail). Without this, a merchant who
+    # re-uploads after an invalid_format / temporarily_unavailable result
+    # accumulates multiple active docs of the same type, and the stale
+    # one can shadow the fresh upload in verification-readiness checks.
+    stale_same_type = db.query(Document).filter(
+        Document.merchant_id == merchant.id,
+        Document.doc_type == doc_type,
+        Document.is_active == True,
+    ).all()
+    for stale in stale_same_type:
+        stale.is_active = False
+
     # Create the document record immediately with "verifying" status.
     # The actual OCR processing happens in the background.
     document = Document(
@@ -442,10 +456,52 @@ def get_merchant_status(
     first document of each type per slot, so without this ordering a stale
     older upload (e.g. an invalid_format row from a previous attempt) would
     shadow the merchant's latest upload on every login.
+
+    SELF-HEALING (Failure Recovery): any active document stuck at
+    "temporarily_unavailable" (extraction failed transiently — e.g. the
+    vision provider's daily quota exhausted mid-upload) is retried here,
+    subject to OCR_STATUS_RETRY_COOLDOWN_SECONDS since its last attempt.
+    The dashboard polls this endpoint every 4s, so an outage that clears
+    recovers AUTOMATICALLY: the stuck document extracts, all 3 slots
+    become valid, and the merchant transitions to "submitted" without the
+    merchant having to re-upload anything. This is what makes the Session 23
+    "temporarily unavailable" quota wall self-heal once budget returns.
     """
+    from datetime import datetime, timezone
+
+    now = datetime.now(timezone.utc)
     documents = db.query(Document).filter(
         Document.merchant_id == merchant.id, Document.is_active == True
     ).order_by(Document.id.desc()).all()
+
+    for document in documents:
+        if document.verification_status != "temporarily_unavailable":
+            continue
+        last_attempt = document.updated_at or document.created_at
+        if last_attempt is None:
+            continue
+        # Make naive timestamps comparable (SQLite returns naive UTC).
+        if last_attempt.tzinfo is None:
+            last_attempt = last_attempt.replace(tzinfo=timezone.utc)
+        if (now - last_attempt).total_seconds() < settings.OCR_STATUS_RETRY_COOLDOWN_SECONDS:
+            continue
+
+        logger.info(
+            "Self-healing retry: re-running OCR for document %s (merchant %s, type %s) after temporary unavailability",
+            document.id, merchant.id, document.doc_type,
+        )
+        # Bump updated_at BEFORE the attempt so a still-down provider isn't
+        # hammered every 4s poll — the cooldown window restarts immediately.
+        document.updated_at = now
+        db.commit()
+        # Re-run the same extraction pipeline (semaphore-serialized).
+        _run_ocr(document.id, document.file_path, document.doc_type, merchant.id)
+        db.expire_all()
+        documents = db.query(Document).filter(
+            Document.merchant_id == merchant.id, Document.is_active == True
+        ).order_by(Document.id.desc()).all()
+        break  # one retry per poll — next poll handles the next stuck doc
+
     return MerchantStatusResponse(
         merchant_id=merchant.id,
         onboarding_status=merchant.onboarding_status,

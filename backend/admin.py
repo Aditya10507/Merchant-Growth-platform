@@ -98,14 +98,19 @@ def list_merchants(
     Returns a list of all merchant accounts, optionally filtered by
     onboarding_status. Used by the admin panel's status-filter tabs.
 
-    Archived test merchants (is_test=True) are excluded — they were
+    status_filter accepts a single status OR a comma-separated list
+    (e.g. "pending,submitted,verified_matching,verified_mismatched") so
+    the panel's simple "Applicants" tab can show every in-review state at
+    once. Archived test merchants (is_test=True) are excluded — they were
     created by E2E test runs and only pollute the review queue.
     """
     query = db.query(Merchant).filter(
         Merchant.role == "merchant", Merchant.is_test == False
     )
     if status_filter:
-        query = query.filter(Merchant.onboarding_status == status_filter)
+        statuses = [s.strip() for s in status_filter.split(",") if s.strip()]
+        if statuses:
+            query = query.filter(Merchant.onboarding_status.in_(statuses))
     merchants = query.all()
     if sort_by_risk:
         # None (not yet verified) sorts last — an unscored merchant isn't

@@ -2088,4 +2088,27 @@ Also: removed the now-unused `playwright` npm dependency (only the deleted front
 
 ---
 
+### Session 26 — simple admin panel (Applicants / Active / Rejected) + application-not-showing fix
+
+**Reported problems:** (1) the user applied with their own email and uploaded all documents, but the application didn't appear in the admin panel; (2) the admin panel was cluttered with engineering cards (chaos panel, risk calibration) — they wanted it simple: applicants list, active merchants list, a verification section, and clear accept/reject with the message reaching the applicant.
+
+**Root cause of the missing application (measured on the live DB + live API):**
+- The user's account (61, `adityaws10507@gmail.com`) uploaded 3 documents at 08:57 — but that window hit the Groq quota exhaustion from Session 23/25 testing. Two documents were marked `temporarily_unavailable` (extraction failed) and one stayed `verifying`; the merchant only transitions to `submitted` when ALL 3 docs have extracted fields, so the application sat at `pending` with nothing to verify. It WAS in the queue (the live probe returned it) but looked like a dead `pending` row — no verify button, stuck docs.
+- The deployed `temporarily_unavailable` status had NO recovery path: the doc just sat there until the merchant manually re-uploaded, and the old stuck doc could shadow/block the fresh attempt.
+
+**Code fixes (committed this session):**
+- `documents.py` upload endpoint: **re-upload retires the previous active same-type doc** (soft-delete) — no more pile-ups of active docs per type (account 90 had 8; now keeps 1 per type) and no stale docs blocking readiness.
+- `documents.py merchant-status` endpoint: **self-healing OCR retry** — any active doc stuck at `temporarily_unavailable` is automatically re-extracted on the next status poll once `OCR_STATUS_RETRY_COOLDOWN_SECONDS` (default 60s) has elapsed since its last attempt. The dashboard polls every 4s, so a transient outage (quota exhaustion, provider hiccup) recovers by itself once budget returns — the merchant becomes `submitted` WITHOUT re-uploading. One retry per poll to avoid hammering a still-down provider.
+- `admin.py list_merchants`: accepts a **comma-separated `status_filter`** (e.g. `pending,submitted,verified_matching,verified_mismatched`) so the simple "Applicants" tab can show every in-review state at once.
+- `AdminPage.tsx` rewritten as a SIMPLE fixed-viewport dashboard: three tabs (Applicants / Active merchants / Rejected), merchant table with risk badge + View button, and a stationary detail pane: verify documents → dedicated **Fraud-Ring Analysis** section (shared PAN/bank identifiers flagged before deciding) → matched/mismatched checks + risk breakdown → **Approve & activate** or **Reject & notify** (the message is exactly what the applicant's dashboard shows). Removed the chaos panel, risk calibration card, and archive-test-merchants button from the UI — those endpoints stay (tested, documented, usable via `/docs`; they're still the demo artifacts for Failure Recovery + AI Judgment).
+- Frontend cleanup: removed the now-unused API wrappers (`clearTestMerchants`, `getFaultState`, `setFault`, `resetFaults`, `runRiskEval`, `getSystemHealth`) and their types from `api.ts`/`types.ts` — the bundle shrank (~188KB → ~181KB). Backend endpoints + tests unchanged.
+
+**Live DB fix (applied directly):** retired the 3 stuck docs on account 61 (clean slate to re-upload), deduped account 90's 8 active docs down to the newest 3 (with extracted fields), and archived the probe merchant (176) I created while verifying OCR. Verified the live queue now shows exactly the 2 real accounts (61 pending clean, 90 submitted with 3 clean docs).
+
+**Docs:** KNOWLEDGE.md (AdminPage row, documents.py row, 65 checks, types row), README (Admin Panel + Merchant Experience feature sections, Use Cases 6/7/9 to use `/docs` instead of UI cards, chaos panel note), docs/03_UIUX.md (sections 5-8 rewritten for the simple panel + fraud-ring section), docs/02_Architecture.md (item 10).
+
+**Verification:** offline suite **65/65** (was 59; +Feature 7 re-upload retirement + comma-separated filter, +Feature 8 self-healing retry) · frontend `tsc -b` + `vite build` clean · live OCR probe succeeded (PAN extracted exactly in 6.1s) · live queue probe clean.
+
+---
+
 *New sessions will be appended below.*

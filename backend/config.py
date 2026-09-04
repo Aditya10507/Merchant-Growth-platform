@@ -100,6 +100,13 @@ class Settings:
     # for minutes (the whole request waits on extraction). Retries above
     # still cover genuinely slow responses within this budget.
     OCR_API_TIMEOUT_SECONDS: float = float(os.getenv("OCR_API_TIMEOUT_SECONDS", "45"))
+    # Self-healing retry (documents.py): when a merchant polls merchant-status
+    # and finds a document stuck at "temporarily_unavailable" (e.g. the
+    # provider's daily quota exhausted mid-upload), re-run extraction after
+    # this cooldown. The merchant's dashboard polls every 4s, so a transient
+    # outage that clears recovers automatically without forcing the merchant
+    # to re-upload. Cooldown prevents hammering a still-down provider.
+    OCR_STATUS_RETRY_COOLDOWN_SECONDS: float = float(os.getenv("OCR_STATUS_RETRY_COOLDOWN_SECONDS", "60"))
 
     # --- Test dataset ---
     # Directory containing the synthetic test documents (PAN, GST, Bank

@@ -29,7 +29,7 @@ Covers the system architecture and functional/non-functional requirements in one
 7. **Mock External Verification Layer** — 5 database tables simulating government DB, CKYC, automated verification, bank validation, compliance reviews.
 8. **Audit Log Store** — append-only `audit_logs` table; every meaningful event logged with reason and actor.
 9. **Demo/reliability layer** — `faults.py` (process-local outage toggles), `health.py` (rolling OCR/LLM/HTTP metrics), `risk_eval.py` (empirical weight calibration).
-10. **Admin panel tooling (admin-only)** — chaos toggles, risk calibration, live system-health, test-merchant archiving.
+10. **Admin panel tooling (admin-only)** — a SIMPLE review queue (Applicants / Active merchants / Rejected tabs + stationary detail pane with verify → fraud-ring analysis → accept/reject). Chaos toggles, risk calibration, system-health, and test-merchant archiving remain as admin-only endpoints (Session 26 kept them out of the UI).
 
 ## 3. Data Flow (current)
 

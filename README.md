@@ -30,10 +30,19 @@ A merchant signs up, uploads PAN / GST / bank-proof documents, and the system **
 - **Human-Readable Rejection Reasons** — LLM rephrases technical reasons into plain language for merchants
 
 ### 👨‍💼 Admin Panel
-- **Merchant Verification Dashboard** — filter by status (pending/submitted/verified/approved/rejected)
-- **Admin-Triggered Verification** — "Verify with internal databases" button runs LLM + all 5 external checks on demand
+- **Simple review queue** — three tabs: **Applicants** / **Active merchants** / **Rejected** (fixed-viewport dashboard; the queue table and the stationary detail pane each scroll internally)
+- **Admin-Triggered Verification** — "Verify with internal databases" button runs LLM + all 5 external checks + fraud-ring scan on demand
+- **Fraud-Ring Analysis** — a dedicated section flags shared PAN/bank identifiers across applicants before the admin decides
 - **Structured Verification Breakdown** — every check shows matched/mismatched with details
-- **One-Click Approve/Reject** — admin makes the final decision with optional rejection note
+- **One-Click Approve/Reject** — admin makes the final decision with optional rejection note; the message appears on the applicant's dashboard
+
+### 🔄 Merchant Experience
+- **Real-Time Status Polling** — frontend polls for OCR and verification progress
+- **Document Upload with Instant Feedback** — valid/invalid/verifying states shown immediately
+- **Self-Healing OCR** — documents stuck at "temporarily unavailable" (e.g. a transient provider outage) are automatically re-extracted on the next status poll once the cooldown elapses; no re-upload needed
+- **Clean Re-Upload** — re-uploading a document type retires the previous attempt (no stale docs shadowing the fresh one)
+- **Restart Application** — rejected merchants can start fresh without re-registering
+- **Demo Account Quick-Fill** — one-click login for Reviewer, Admin, and Merchant demo accounts
 
 ### 🔄 Merchant Experience
 - **Real-Time Status Polling** — frontend polls for OCR and verification progress
@@ -46,14 +55,14 @@ A merchant signs up, uploads PAN / GST / bank-proof documents, and the system **
 - **Batch Test Report** — `/admin/batch-test` runs accuracy metrics across the seeded synthetic ground-truth records
 - **Full API Documentation** — Swagger UI at `/docs` for every endpoint
 
-### 🧨 Failure-Injection Demo (chaos panel)
-- **Simulated outages, real recovery paths** — admin toggles OCR/LLM/external-source outages and watches the system degrade exactly as it would in production (retry-friendly uploads, deferred verification, audit-logged reasons)
+### 🧨 Failure-Injection Demo (chaos panel — via `/docs`)
+- **Simulated outages, real recovery paths** — the admin toggles OCR/LLM/external-source outages via the API (`/docs`, `faults.py`) and watches the system degrade exactly as it would in production (retry-friendly uploads, deferred verification, audit-logged reasons). Kept out of the admin UI on purpose — the panel stays a simple review queue (Session 26).
 - **Process-local & self-healing** — toggles reset on restart, so a demo can never get stuck; every toggle is written to the admin's audit trail
 - **Fail-safe by design** — when the LLM or an external source is down, verification is *deferred* (no determination on partial signals), never scored against silence
 
 ### 🎯 Empirical Risk-Weight Calibration
 - **Measured, not guessed** — scores every labeled merchant under the current risk weights and reports how well risk separates clean from flagged cases (per-class score stats, best-F1 cutoff, full threshold sweep)
-- **CLI + API** — `python risk_eval.py` or the admin panel's "Run calibration"
+- **CLI + API** — `python risk_eval.py` or `POST /admin/risk-eval` (Swagger UI at `/docs`)
 
 ### 🛡️ Prompt-Injection Defense
 - **Hostile documents can't corrupt the AI check** — extracted document text is scanned for instruction-override payloads *before* it reaches the LLM; suspected payloads are redacted, audit-logged, and force a `prompt_injection_suspected` mismatch so the merchant routes to human review
@@ -320,17 +329,17 @@ docker-compose up --build
 4. ✅ Old documents retired, status reset to "pending"
 5. Upload new documents → Fresh verification flow
 
-### Use Case 6: Failure-Injection Demo (chaos panel — Failure Recovery)
-1. Login as **Admin** → see the "Failure-injection demo" panel at the top
-2. Toggle **"LLM verification down"** → open a submitted merchant → click "Verify with internal databases"
+### Use Case 6: Failure-Injection Demo (chaos panel — Failure Recovery, via `/docs`)
+1. Login as **Admin**, open Swagger at `/docs` → `PUT /admin/faults/llm_down` with `{"enabled": true}`
+2. In the panel, open a submitted merchant → click "Verify with internal databases"
 3. ✅ Verify is **deferred** (no checks run, merchant stays submitted) — the system never makes a determination on partial signals
-4. Toggle **"OCR engine down"** → as a merchant upload a document
-5. ✅ Upload shows "Retry upload" (temporarily unavailable) instead of failing hard
-6. Click **"Clear all faults"** → verify and uploads work again instantly
+4. `PUT /admin/faults/ocr_down` → as a merchant upload a document
+5. ✅ Upload shows "temporarily unavailable" instead of failing hard — and **self-heals** on the next poll once the fault clears
+6. `POST /admin/faults/reset` → verify and uploads work again instantly
 7. ✅ Every toggle is visible in the merchant's audit trail
 
 ### Use Case 7: Risk-Weight Calibration (AI Judgment)
-1. Login as **Admin** → click **"Run calibration"** in the Risk-weight calibration panel
+1. Login as **Admin**, open Swagger at `/docs` → `POST /admin/risk-eval`
 2. ✅ Clean merchants average risk 0; flagged merchants average high risk
 3. ✅ Best-F1 decision cutoff + full threshold sweep (precision/recall/F1) shown
 4. Or from the terminal: `cd backend && python risk_eval.py`
@@ -346,8 +355,8 @@ docker-compose up --build
 1. Login as **Admin** and call `GET /admin/system-health` (e.g. via `/docs`)
 2. ✅ OCR extraction success rate + avg/p95 latency, LLM success rate + latency,
    and HTTP request error counts over the last hour
-3. Toggle **"OCR engine down"** in the chaos panel → the active fault appears in
-   the health response, and any upload during the outage counts as a failed extraction
+3. `PUT /admin/faults/ocr_down` → the active fault appears in the health response,
+   and any upload during the outage counts as a failed extraction
 4. ✅ Degradations are visible in the numbers AND explainable by the fault field
 
 ### Use Case 10: Concurrency-Safe Decisions (Build Quality)

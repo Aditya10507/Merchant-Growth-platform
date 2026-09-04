@@ -453,6 +453,125 @@ def main() -> None:
     db.close()
 
     print()
+    print("Feature 7 — queue UX: re-upload retires same-type docs + comma-separated filter")
+    print("-" * 50)
+    # 7a: a merchant re-uploading a document type retires the previous ACTIVE
+    # doc of that type (soft-delete) so stale rows can't shadow fresh uploads
+    # or block verification-readiness.
+    db = SessionLocal()
+    m7 = Merchant(business_name="Reupload Case", email="reupload@test.com",
+                  password_hash=hash_password("TestPass123"), role="merchant",
+                  onboarding_status="pending", is_test=False)
+    db.add(m7)
+    db.flush()
+    d1 = Document(merchant_id=m7.id, doc_type="PAN", file_path="_tmp/pan1.png",
+                  verification_status="invalid_format", is_active=True)
+    db.add(d1)
+    db.commit()
+    mid7 = m7.id
+    db.close()
+
+    # Sign up as this merchant via API and upload a PAN again
+    db = SessionLocal()
+    from auth import hash_password as _hp
+    m7row = db.query(Merchant).filter(Merchant.id == mid7).first()
+    m7row.password_hash = _hp("TestPass123")
+    db.commit()
+    db.close()
+    r = client.post("/auth/login", json={"email": "reupload@test.com", "password": "TestPass123"})
+    M7H = {"Authorization": f"Bearer {r.json()['access_token']}"}
+    client.post("/admin/faults/reset", headers=AH)
+    r = client.post("/documents/upload", headers=M7H, params={"doc_type": "PAN"},
+                    files={"file": ("pan.png", b"\x89PNG\r\n\x1a\nx", "image/png")})
+    db = SessionLocal()
+    active_pans = db.query(Document).filter(
+        Document.merchant_id == mid7, Document.doc_type == "PAN", Document.is_active == True
+    ).count()
+    retired = db.query(Document).filter(
+        Document.merchant_id == mid7, Document.doc_type == "PAN", Document.is_active == False
+    ).count()
+    check("re-upload retires the previous active same-type doc",
+          active_pans == 1 and retired == 1, f"active={active_pans}, retired={retired}")
+    db.close()
+
+    # 7b: the admin list accepts a comma-separated status filter
+    r = client.get("/admin/merchants?status_filter=pending,submitted", headers=AH)
+    check("comma-separated status filter works", r.status_code == 200)
+    statuses = {m["onboarding_status"] for m in r.json()}
+    check("filter only returns listed statuses", statuses <= {"pending", "submitted"},
+          f"got {statuses}")
+    r = client.get("/admin/merchants?status_filter=active", headers=AH)
+    check("single-status filter still works",
+          r.status_code == 200 and all(m["onboarding_status"] == "active" for m in r.json()))
+
+    print()
+    print("Feature 8 — self-healing retry of temporarily_unavailable docs")
+    print("-" * 50)
+    # A doc stuck at temporarily_unavailable (transient provider outage, e.g.
+    # quota exhaustion) must be re-extracted automatically on the next
+    # merchant-status poll once the cooldown has elapsed — so the application
+    # recovers WITHOUT the merchant re-uploading, and appears as submitted.
+    import ocr as ocr_module
+
+    db = SessionLocal()
+    m8 = Merchant(business_name="Self Heal Case", email="selfheal@test.com",
+                  password_hash=hash_password("TestPass123"), role="merchant",
+                  onboarding_status="pending", is_test=False)
+    db.add(m8)
+    db.flush()
+    mid8 = m8.id
+    for doc_type, flds in [("PAN", {"pan_number": "UJALK5542W", "name": "Baljit Khan", "dob": "23/12/1963"}),
+                           ("GST", {"gst_number": "27UJALK5542W1Z5", "name": "Khan Retail Mart"}),
+                           ("BANK_PROOF", {"account_number": "267390881362", "ifsc": "BARB0071834", "name": "Baljit Khan"})]:
+        db.add(Document(merchant_id=mid8, doc_type=doc_type,
+                        file_path=f"_tmp/{doc_type}.png",
+                        extracted_fields_json=None,
+                        verification_status="temporarily_unavailable", is_active=True))
+    db.commit()
+    db.close()
+
+    db = SessionLocal()
+    m8row = db.query(Merchant).filter(Merchant.id == mid8).first()
+    m8row.password_hash = hash_password("TestPass123")
+    db.commit()
+    db.close()
+    r = client.post("/auth/login", json={"email": "selfheal@test.com", "password": "TestPass123"})
+    M8H = {"Authorization": f"Bearer {r.json()['access_token']}"}
+
+    # With OCR patched to succeed, the first poll (cooldown passed — docs
+    # were just created) must heal all 3 docs and submit the merchant.
+    # Cooldown is per-doc and updated_at is bumped BEFORE each attempt, so
+    # one poll heals one doc; three polls heal all three.
+    real_extract = ocr_module.extract_structured_fields
+    def fake_extract(file_path, doc_type):
+        base = {"PAN": {"pan_number": "UJALK5542W", "name": "Baljit Khan", "dob": "23/12/1963"},
+                "GST": {"gst_number": "27UJALK5542W1Z5", "name": "Khan Retail Mart"},
+                "BANK_PROOF": {"account_number": "267390881362", "ifsc": "BARB0071834", "name": "Baljit Khan"}}
+        return base[doc_type], 0.95, "Khan Retail Mart"
+    ocr_module.extract_structured_fields = fake_extract
+    try:
+        # Bump updated_at back so all 3 are past the cooldown (created just now)
+        db = SessionLocal()
+        from datetime import datetime, timedelta, timezone
+        old = datetime.now(timezone.utc) - timedelta(seconds=3600)
+        db.query(Document).filter(Document.merchant_id == mid8).update({"updated_at": old})
+        db.commit()
+        db.close()
+        for _ in range(3):
+            r = client.get("/documents/merchant-status", headers=M8H)
+        db = SessionLocal()
+        m8f = db.query(Merchant).filter(Merchant.id == mid8).first()
+        docs8 = db.query(Document).filter(Document.merchant_id == mid8, Document.is_active == True).all()
+        db.close()
+        check("stuck docs self-heal via merchant-status poll",
+              all(d.verification_status == "submitted" for d in docs8),
+              f"statuses={[d.verification_status for d in docs8]}")
+        check("merchant transitions to submitted without re-upload",
+              m8f.onboarding_status == "submitted", f"got {m8f.onboarding_status}")
+    finally:
+        ocr_module.extract_structured_fields = real_extract
+
+    print()
     print("=" * 50)
     print(f"RESULT: {PASS} passed, {FAIL} failed")
     sys.exit(1 if FAIL else 0)

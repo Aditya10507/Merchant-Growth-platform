@@ -36,20 +36,17 @@
 ## 5. Admin/Reviewer Panel (AdminPage)
 
 ### 5.1 Review queue
-- Status filter tabs: All / pending / submitted / verified_matching / verified_mismatched / active / rejected.
-- Merchant table: business, status badge, **risk badge**, submitted date; rows open the detail panel. Queue supports **sort by risk** so the riskiest applications surface first.
-- Admin-only controls beside the tabs: **"Archive test merchants"** (maintenance, with a result alert).
+- Three simple tabs (Session 26 — the panel is intentionally minimal): **Applicants** (pending/submitted/verified states, one comma-separated status filter), **Active merchants** (approved accounts), **Rejected**.
+- Merchant table: business, status badge, **risk badge**, submitted date; the **View** button opens the detail pane. No engineering cards in the panel — chaos/calibration/health stay as backend endpoints + `/docs` (Session 26).
 
-### 5.2 Detail panel (side panel)
+### 5.2 Detail panel (stationary side pane)
 - Merchant identity + status + risk badge; documents with extracted fields and OCR confidence.
-- **submitted** → "Verify with internal databases" button (runs LLM + 5 sources + fraud scan; on deferral shows the 503 message and the merchant stays submitted).
-- **verified_matching** → matched-checks list + one-click **"Approve & activate account"**.
-- **verified_mismatched** → passed-checks list, failed-checks list (fraud-ring and prompt-injection findings visually highlighted), risk-score breakdown (points per check), editable rejection message pre-filled from the auto-drafted cause, **"Reject & notify merchant"**.
+- **submitted** → **"Verify with internal databases"** button (runs LLM + 5 sources + fraud-ring scan; on deferral shows the 503 message and the merchant stays submitted).
+- **Fraud-ring analysis** — a dedicated section (visible once verification has run) lists every `fraud_ring_*` check: "no shared identifiers" when clean, an explicit flagged summary when the applicant shares PAN/bank identifiers with other applications.
+- **verified_matching** → fraud-ring section + matched-checks list + one-click **"Approve & activate account"**.
+- **verified_mismatched** → fraud-ring section, passed-checks list, failed-checks list (fraud-ring and prompt-injection findings visually highlighted), risk-score breakdown (points per check), editable rejection message pre-filled from the auto-drafted cause, **"Reject & notify merchant"**.
+- Approve/reject records the decision and its message; the merchant's dashboard reflects it immediately (`active` banner or `rejection_reason`).
 - Audit trail rendered as a timeline of labeled actions with reasons and timestamps.
-
-### 5.3 Admin-only engineering cards (grid above the queue — reviewers never see them)
-- **Chaos panel (failure-injection)** — three toggle switches (`ocr_down`, `llm_down`, `sources_down`) with one-line hints; an active-fault banner and "Clear all faults" panic button.
-- **Risk-weight calibration** — "Run calibration" → report: labeled counts, clean vs flagged mean scores, best-F1 cutoff + confusion numbers, collapsible full cutoff sweep table, "Run again".
 
 ## 6. States
 
@@ -64,13 +61,13 @@ All async flows follow the shared `AsyncState<T>` pattern (idle/loading/success/
 
 ## 7. Layout & Responsive Behavior
 
-- The app shell is a **fixed-viewport dashboard** (sidebar + main), not a long scrollable page: the admin header, tabs, and engineering cards are pinned, and the review row below flexes — the merchant queue table and the stationary detail pane each scroll *internally* (`overflow-y-auto` + sticky table header), so clicking "View" never scrolls the detail away.
-- Admin queue + detail panel sit side by side on wide screens (fixed-width detail column); the admin engineering cards stack 2-up on large screens, 1-up below; tables scroll rather than squeeze on narrow viewports.
+- The app shell is a **fixed-viewport dashboard** (sidebar + main), not a long scrollable page: the admin header and tabs are pinned, and the review row below flexes — the merchant queue table and the stationary detail pane each scroll *internally* (`overflow-y-auto` + sticky table header), so clicking "View" never scrolls the detail away.
+- Admin queue + detail panel sit side by side on wide screens (fixed-width detail column); tables scroll rather than squeeze on narrow viewports.
 - Dashboard slots: 3-up on desktop, wrapping to 1-up on mobile.
 
 ## 8. Accessibility & Interaction Notes
 
 - StatusBadge pairs color with text; RiskBadge shows the numeric score + a level label ("Low risk" etc.).
-- Toggle switches are real `role="switch"` buttons with `aria-checked`; tabs use `aria-pressed`.
+- Tabs use `aria-pressed`.
 - Keyboard-navigable tables/buttons; visible focus states throughout.
 - Components are memoized; the dashboard polls at 4s — a deliberate balance between liveness and load.
