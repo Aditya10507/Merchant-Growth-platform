@@ -415,7 +415,7 @@ merchant-growth-platform/
 │   │   └── constants.ts       # Configuration constants
 │   ├── Dockerfile             # Container build
 │   └── package.json           # Node dependencies
-├── test_documents/             # 50 synthetic test merchants (PAN/GST/Bank PNGs)
+├── test_documents/             # 50 synthetic test merchants, one folder per holder name (PAN/GST/Bank PNGs)
 ├── docs/                       # PRD, Architecture, UI/UX
 ├── docs/adr/                   # Architecture Decision Records (8 decisions)
 ├── docker-compose.yml          # One-command local deployment

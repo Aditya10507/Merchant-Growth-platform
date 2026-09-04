@@ -65,8 +65,8 @@ import requests
 BACKEND_URL = "http://localhost:8000"
 FRONTEND_URL = "http://localhost:5173"
 TEST_DOCS_DIR = Path(__file__).parent.parent / "test_documents" / "test_documents"
-CLEAN_PAN_DIR = TEST_DOCS_DIR / "UJALK5542W"   # seed data has verified records
-MISMATCH_PAN_DIR = TEST_DOCS_DIR / "VDAWP9860F"  # seed data has invalid records
+CLEAN_PAN_DIR = TEST_DOCS_DIR / "Baljit Khan"    # seed data has verified records (PAN UJALK5542W)
+MISMATCH_PAN_DIR = TEST_DOCS_DIR / "Manpreet Patel"  # seed data has invalid records (PAN VDAWP9860F)
 SCREENSHOT_DIR = Path(__file__).parent / "test_screenshots"
 SCREENSHOT_DIR.mkdir(exist_ok=True)
 

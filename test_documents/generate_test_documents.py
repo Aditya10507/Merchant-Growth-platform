@@ -21,9 +21,11 @@ Usage:
         --bank-validation bank_account_validation.csv \
         --output-dir test_documents
 
-Output: test_documents/<pan_number>/PAN.png, GST.png, BANK_PROOF.png
+Output: test_documents/<holder name>/PAN.png, GST.png, BANK_PROOF.png
         plus a summary.csv mapping each merchant to their file paths
-        and expected outcome, for traceability.
+        and expected outcome, for traceability. Folders are named after
+        the PAN holder (Session 30) so testers can pick documents by the
+        person's name instead of decoding a PAN number.
 """
 
 import argparse
@@ -98,6 +100,11 @@ def render_bank_proof(name: str, account_number: str, ifsc: str) -> Image.Image:
     )
 
 
+def sanitize_dir_name(name: str) -> str:
+    """Makes a holder name safe as a folder name (keeps spaces readable)."""
+    return "".join(c for c in name if c.isalnum() or c in (" ", "-", "'")).strip()
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--merchant-reference", required=True)
@@ -122,9 +129,19 @@ def main() -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
 
     summary_rows = []
+    used_names: set[str] = set()
     for merchant, bank in zip(merchants, bank_rows):
         pan = merchant["pan_number"]
-        merchant_dir = output_dir / pan
+        # Folder per holder NAME (Session 30), disambiguated with the PAN
+        # if two merchants ever share a name.
+        base = sanitize_dir_name(merchant["name"])
+        name = base
+        i = 2
+        while name in used_names:
+            name = f"{base} {i}"
+            i += 1
+        used_names.add(name)
+        merchant_dir = output_dir / name
         merchant_dir.mkdir(parents=True, exist_ok=True)
 
         pan_path = merchant_dir / "PAN.png"

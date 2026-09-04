@@ -128,7 +128,7 @@ def seed_test_merchants(db) -> None:
 TEST_DOC_PANS = {
     "clean": [
         {"pan": "UJALK5542W", "name": "Baljit Khan", "gst": "27UJALK5542W1Z5", "ifsc": "BARB0071834", "account": "267390881362"},
-        {"pan": "HAOEL7625O", "name": "Ravi Shankar", "gst": "27HAOEL7625O1Z5", "ifsc": "IDIB0252597", "account": "4233817042012"},
+        {"pan": "HAOEL7625O", "name": "Meera Kamath", "gst": "27HAOEL7625O1Z5", "ifsc": "IDIB0252597", "account": "4233817042012"},
         {"pan": "CCZEE2615Q", "name": "Meera Mukherjee", "gst": "27CCZEE2615Q1Z5", "ifsc": "ICIC0912352", "account": "523353074112178"},
     ],
     "mismatch": [

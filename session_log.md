@@ -2157,4 +2157,20 @@ Also: removed the now-unused `playwright` npm dependency (only the deleted front
 
 ---
 
+## Session 30 — Rename test documents from PAN numbers to holder names
+
+**Request:** Name the test-document folders after the person whose PAN is on the card (not the PAN number), so testers can pick documents by name.
+
+**Challenge:** The PAN → name mapping did not exist anywhere in the repo (source CSVs were never committed; summary.csv only has PANs). The names live only inside the rendered PAN images, so the project's own OCR pipeline (`ocr.extract_structured_fields`, with fallback-key rotation) was used to read all 50 PAN cards — resume-capable batch, ~105K tokens total across the key pool.
+
+**Done:**
+- Extracted holder name for all 50 PANs via OCR (spot-verified: `AGSFS4133P → Anirban Rathore`, conf 0.95; double-extracted HAOEL7625O → **Meera Kamath**, which corrected a stale `Ravi Shankar` entry in `seed.py`'s TEST_DOC_PANS — cosmetic only, no code compares govt-record names).
+- `git mv` each `test_documents/test_documents/<PAN>/` folder to `<Holder Name>/` (spaces preserved, all 50 unique).
+- Rewrote `summary.csv` image paths to the new folder names (paths are informational — the download endpoint zips the directory directly).
+- Updated `backend/test_e2e.py` constants (`UJALK5542W → "Baljit Khan"`, `VDAWP9860F → "Manpreet Patel"`), README tree comment, and `generate_test_documents.py` (folder-per-holder-name with PAN disambiguation on duplicate names) so re-runs stay consistent.
+
+**Verification:** offline suite **83/83** · all 50 folders contain exactly PAN/GST/BANK_PROOF.png · git tracked 150 renames.
+
+---
+
 *New sessions will be appended below.*
