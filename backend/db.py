@@ -188,6 +188,43 @@ def init_db() -> None:
     Base.metadata.create_all(bind=engine)
 
 
+def apply_migrations() -> None:
+    """
+    Applies Alembic migrations to the current database — or stamps Alembic
+    at head on a fresh database, where init_db() already created the full
+    schema from ORM models and running migrations would fail with
+    DuplicateColumn errors.
+
+    Called at app startup AND by seed.py before it touches the ORM: the
+    Docker/Render start command runs `python seed.py` before uvicorn, so
+    if migrations only ran in the app lifespan, seed.py's schema queries
+    would crash on columns that don't exist yet (this bit us in Session 19
+    — the live deploy failed with "column merchants.is_test does not
+    exist"). Idempotent; safe to call repeatedly.
+    """
+    import logging
+    from pathlib import Path
+
+    from alembic import command as alembic_command
+    from alembic.config import Config as AlembicConfig
+    from sqlalchemy import inspect
+
+    logger = logging.getLogger(__name__)
+    try:
+        alembic_cfg = AlembicConfig(str(Path(__file__).parent / "alembic.ini"))
+        alembic_cfg.set_main_option("sqlalchemy.url", settings.DATABASE_URL)
+        inspector = inspect(engine)
+        has_alembic_table = "alembic_version" in inspector.get_table_names()
+        if not has_alembic_table:
+            alembic_command.stamp(alembic_cfg, "head")
+            logger.info("Fresh database detected — Alembic stamped at head.")
+        else:
+            alembic_command.upgrade(alembic_cfg, "head")
+            logger.info("Alembic migrations applied successfully.")
+    except Exception:
+        logger.exception("Alembic migration failed — continuing with existing schema.")
+
+
 def get_db():
     """FastAPI dependency that yields a scoped DB session per request."""
     db = SessionLocal()

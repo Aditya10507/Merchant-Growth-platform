@@ -26,6 +26,7 @@ from db import (
     GovtDatabase,
     Merchant,
     SessionLocal,
+    apply_migrations,
     init_db,
 )
 
@@ -188,6 +189,13 @@ def ensure_test_doc_pan_records(db) -> None:
 def main() -> None:
     """Seed the database — but only if it's empty (idempotent)."""
     init_db()
+    # CRITICAL: this module runs standalone (`python seed.py`) as the
+    # Docker/Render start command BEFORE uvicorn boots. The ORM queries
+    # below need the latest schema, so apply Alembic migrations here too
+    # (idempotent; stamps at head on a fresh DB). Without this, a schema
+    # change like Merchant.is_test crashes seed.py with
+    # "column merchants.is_test does not exist" and the deploy fails.
+    apply_migrations()
     db = SessionLocal()
     try:
         # ALWAYS ensure test document PANs exist in external tables.

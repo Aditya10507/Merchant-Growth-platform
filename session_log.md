@@ -1760,4 +1760,35 @@ Built an admin-only maintenance feature that archives those test merchants so th
 
 ---
 
+## Session 19b — Hotfix: Render deploy failed with "column merchants.is_test does not exist" (September 4, 2026)
+
+### What happened
+The Session 19 push deployed cleanly to GitHub, but Render's deploy **failed** with `sqlalchemy.exc.ProgrammingError: column merchants.is_test does not exist` — the start command ran `python seed.py` before uvicorn, and seed.py's `Merchant.count()` hit the missing column because Alembic migrations only ran inside the app's lifespan.
+
+### Root cause
+Both entry paths run seeding before the server:
+- `render.yaml` startCommand: `cd backend && python seed.py && uvicorn main:app ...`
+- `backend/Dockerfile` CMD: `python seed.py && uvicorn main:app --host 0.0.0.0 --port 8000`
+
+`seed.py` queries the ORM (`db.query(Merchant).count()`) with **no alembic upgrade step of its own**, so any schema change that adds a column breaks the standalone seed invocation and fails the whole deploy (seed.py has no try/except, so the ProgrammingError propagated → exit 1).
+
+### Fix
+Centralized the Alembic wiring into one place and called it from both entry points:
+
+| File | Change |
+|---|---|
+| `backend/db.py` | New `apply_migrations()` — runs `alembic upgrade head`, or stamps at head on a fresh DB where `init_db()` already created the full ORM schema. Idempotent; resolves `alembic.ini` via `Path(__file__).parent` so it works from any CWD (Docker `/app`, Render `cd backend`, local). |
+| `backend/main.py` | Lifespan now calls `db.apply_migrations()` instead of the duplicated inline alembic block. |
+| `backend/seed.py` | `main()` calls `apply_migrations()` right after `init_db()`, with a comment explaining why (the Session 19 deploy failure). |
+
+### Verification
+- Reproduced the exact Render failure locally: simulated a pre-migration live DB (full schema minus `is_test`, `alembic_version` stamped at `06c7dad78bad`, existing merchants) → ran `DATABASE_URL=... python seed.py` → **exit 0**, column added, ground-truth merchant preserved (`is_test=0`), test merchant archived (`is_test=1`), head updated to `8f2c1a9b4d7e`. ✅
+- App boots via TestClient on that migrated DB: `/health` 200, admin login + `/admin/merchants` + `/admin/batch-test` all work with the `is_test` filter. ✅
+- `python -m py_compile *.py alembic/versions/*.py`: clean.
+
+### Lesson learned (future schema changes)
+**Any new column/table must be safe for `python seed.py` to run standalone**, because that runs before uvicorn on Docker/Render. Keep using `apply_migrations()` at the top of seed's `main()` — do not remove it.
+
+---
+
 *New sessions will be appended below.*
