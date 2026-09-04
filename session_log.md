@@ -2213,7 +2213,17 @@ Also: removed the now-unused `playwright` npm dependency (only the deleted front
 
 ---
 
-*New sessions will be appended below.*
+## Session 34 — Project renamed to OnGuard
+
+**Request:** The name "Merchant-Growth-platform" did not fit the project (it is a risk manager, not a growth product). User chose **OnGuard** from a shortlist (verification + human gate imagery).
+
+**Done:**
+- Renamed the GitHub repo `Aditya10507/Merchant-Growth-platform` to **`Aditya10507/OnGuard`** via `gh repo rename` (old URL 301-redirects, so existing links keep working).
+- Updated `README.md`: title `# OnGuard`, intro paragraph, CI badge URL to the new slug, project-structure root name `onguard/`.
+- Updated the local git remote to `https://github.com/Aditya10507/OnGuard.git`.
+- Verified the new badge URL returns "CI - passing".
+
+**Not changed (by design):** Vercel/Render subdomain URLs (unaffected by a GitHub rename); package.json / render.yaml / docker-compose names (they never referenced the repo slug); the session log's historical entries (they are a changelog record and keep the old name for accuracy).
 
 ---
 

@@ -1,6 +1,6 @@
-# Merchant Onboarding Copilot
+# OnGuard
 
-Automated KYC verification for merchant onboarding, built for the Razorpay AI Buildathon 2026 under the **AI Risk Manager** track. The system helps identify, assess, prioritize, and explain merchant risk.
+Automated KYC verification for merchant onboarding, built for the Razorpay AI Buildathon 2026 under the **AI Risk Manager** track. OnGuard helps identify, assess, prioritize, and explain merchant risk.
 
 A merchant signs up and uploads PAN, GST, and bank proof documents. The system extracts the text from each document, cross-checks the details, and validates them against 5 simulated external data sources plus a fraud-ring scan across all applicants. It produces a weighted risk score and a complete audit trail. A human admin always makes the final approve or reject decision. No merchant is ever activated by automation alone, which is a deliberate human-in-the-loop design for compliance.
 
@@ -23,7 +23,7 @@ A merchant signs up and uploads PAN, GST, and bank proof documents. The system e
 | Offline feature suite | 83/83 checks (concurrency race, injection defense, quota recovery, self-healing OCR, LLM key rotation, admin stats) |
 | Quota-exhaustion recovery | 3-key `LLM_FALLBACK_KEYS` rotation pool, live-tested with the primary key fully exhausted |
 
-Full methodology, baseline runs, and honest constraints: [docs/PERFORMANCE.md](docs/PERFORMANCE.md). CI status: [![CI](https://github.com/Aditya10507/Merchant-Growth-platform/actions/workflows/ci.yml/badge.svg)](https://github.com/Aditya10507/Merchant-Growth-platform/actions/workflows/ci.yml)
+Full methodology, baseline runs, and honest constraints: [docs/PERFORMANCE.md](docs/PERFORMANCE.md). CI status: [![CI](https://github.com/Aditya10507/OnGuard/actions/workflows/ci.yml/badge.svg)](https://github.com/Aditya10507/OnGuard/actions/workflows/ci.yml)
 
 ---
 
@@ -367,7 +367,7 @@ docker-compose up --build
 ## Project Structure
 
 ```
-merchant-growth-platform/
+onguard/
   backend/                    # FastAPI backend
     main.py                   # App entrypoint, CORS, startup
     auth.py                   # JWT authentication
