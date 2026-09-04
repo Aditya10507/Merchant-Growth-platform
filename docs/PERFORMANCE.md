@@ -33,7 +33,7 @@ Independent baseline runs (clean quota window): GST **3.38s**, BANK_PROOF **2.42
 | Ground-truth merchants scored | **25** (15 approve / 10 flag) |
 | False approvals | **0** |
 | Unresolved exceptions | **0** |
-| Offline feature suite (`test_features.py`) | **76/76 checks** |
+| Offline feature suite (`test_features.py`) | **83/83 checks** |
 
 The batch-test replays the real deterministic decision engine against 25 seeded
 merchants with hand-labeled expected outcomes — the accuracy number is produced by

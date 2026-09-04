@@ -216,7 +216,14 @@ def _run_ocr(document_id: int, file_path: str, doc_type: str, merchant_id: int) 
                 document_id, doc_type, raw_text[:200], fields,
             )
 
-        # Step 3: Format matched — store extracted fields and OCR confidence
+        # Step 3: Format matched — store extracted fields and OCR confidence.
+        # The document is immediately ACCEPTED ("submitted") — its own format
+        # check passed. It must NOT linger at "verifying": no identity
+        # verification happens at upload time (Session 29 — the old green
+        # "verifying identity details" state implied exactly that and was
+        # misleading). The cross-document identity/LLM/external-source
+        # verification happens LATER, on the admin's "Verify" action; here
+        # the document is simply queued into the application.
         document.extracted_fields_json = _json.dumps(fields)
         document.ocr_confidence = confidence
         # Populate indexed columns for cross-merchant fraud-ring lookups
@@ -224,13 +231,14 @@ def _run_ocr(document_id: int, file_path: str, doc_type: str, merchant_id: int) 
             document.extracted_pan_number = fields.get("pan_number") or None
         elif doc_type == "BANK_PROOF":
             document.extracted_account_number = fields.get("account_number") or None
-        document.verification_status = "verifying"
+        document.verification_status = "submitted"
         db.commit()
 
-        logger.info("Document %s passed format check, fields stored", document_id)
+        logger.info("Document %s passed format check, fields stored, status=submitted", document_id)
 
         # Step 4: If all 3 required document types are now present, trigger
-        # cross-document verification + the Decision Engine.
+        # the merchant-level "submitted" transition (still awaiting the
+        # admin-triggered verification).
         merchant = db.query(Merchant).filter(Merchant.id == merchant_id).first()
         if merchant is not None:
             _run_verification_if_ready(merchant, db)

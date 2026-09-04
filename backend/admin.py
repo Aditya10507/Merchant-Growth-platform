@@ -210,6 +210,17 @@ def get_merchant_detail(
         AuditLog.merchant_id == merchant_id
     ).order_by(AuditLog.created_at.asc()).all()
 
+    # Session 29: the reviewer's audit trail shows MERCHANT-LEVEL lifecycle
+    # events only. Per-document upload attempts (a doc rejected as invalid,
+    # "no readable text", an OCR outage mid-upload...) are logged with a
+    # document_id and belong to the applicant's own upload history — they
+    # clutter the admin's review with "how many times the applicant tried".
+    # Current document states (incl. per-doc rejection reasons) are already
+    # visible in the Documents section above; the audit trail here tells the
+    # reviewer what the SYSTEM did: verification runs, deferrals, and the
+    # human decision.
+    reviewer_trail = [a for a in audit_entries if a.document_id is None]
+
     return MerchantDetailResponse(
         merchant_id=merchant.id,
         business_name=merchant.business_name,
@@ -230,7 +241,7 @@ def get_merchant_detail(
                 document_id=a.document_id,
                 created_at=a.created_at.isoformat(),
             )
-            for a in audit_entries
+            for a in reviewer_trail
         ],
     )
 

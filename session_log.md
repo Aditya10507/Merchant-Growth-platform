@@ -2140,4 +2140,21 @@ Also: removed the now-unused `playwright` npm dependency (only the deleted front
 
 ---
 
+## Session 29 — Fix "no approve/reject" deadlock, misleading "verifying identity", audit noise
+
+**Request:** (1) admin has no approve/reject option for a submitted application and verification shows "Verification deferred: LLM service unavailable"; (2) the admin detail shows the applicant's upload-attempt history (should be applicant-side only); (3) merchant UI says "Valid document — verifying identity" — but upload only does OCR pattern/format checking, no identity verification.
+
+**Root causes found & fixed:**
+1. **Admin deadlock = `verify.py` never rotated fallback keys.** OCR (`ocr.py`) rotates to `LLM_FALLBACK_KEYS` on 401/403/429, but the LLM cross-verification path built a client with ONLY the primary key — so when the primary Groq account's 200K/day quota was spent (the live audit trail showed org quota 198K/200K), every admin "Verify" call deferred with 503 and the merchant stayed `submitted` forever → no approve/reject ever appeared. **Fix:** `verify.py` now shares the same key-pool rotation (`_get_api_keys` + `_chat_completion` rotating on 401/403/429 + network errors) across cross-verification, rejection-cause generation, and humanization. Rotation proven by offline test (fake primary 429 → succeeds on fallback key).
+2. **Misleading "verifying identity" state.** After a document passed its OCR/format check it was parked at `verifying` (and stayed there until all 3 docs existed) while the UI showed "Valid document — verifying identity details…". No identity verification happens at upload — cross-document identity/LLM/external checks only run on the admin's Verify action. **Fix:** a doc that passes its format check is now immediately accepted (`verification_status = "submitted"`); DocumentSlot shows "Checking document format…" only during OCR and "Valid document — format check passed." once accepted. No false identity claims.
+3. **Audit-trail noise in the admin detail.** Per-document upload attempts (invalid PAN / no readable text / OCR outage) were written to the audit log with a `document_id` and surfaced in the reviewer's detail trail as "how many times the applicant uploaded bad docs". **Fix:** the admin merchant detail now returns merchant-level lifecycle events only (verification runs, deferrals, reviewer decision, expected outcomes); per-document upload attempts remain in the DB (immutable) and are visible to the applicant, not the reviewer.
+
+**Tests (Feature 10, +7 checks → 83):** format-passing upload returns `submitted` (never `verifying`) while merchant stays pending until all 3 docs present · verify rotates primary→fallback on 429 in order · admin audit trail hides doc-upload noise while keeping lifecycle events.
+
+**Docs:** KNOWLEDGE (83 checks, verify.py/documents.py rows), README (83/83), PERFORMANCE (83/83).
+
+**Verification:** offline suite **83/83** · frontend `tsc -b` + `vite build` clean. Note: the LIVE site needs `LLM_FALLBACK_KEYS` set in Render's env (backend/.env is gitignored; Render reads its own Environment tab) for the rotation to have keys to rotate to — otherwise a spent primary key still defers.
+
+---
+
 *New sessions will be appended below.*

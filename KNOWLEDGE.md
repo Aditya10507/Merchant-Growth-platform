@@ -50,7 +50,7 @@ Full design context:
 | `injection_guard.py` | Scans merchant-supplied document text for prompt-injection payloads before it reaches the LLM; redacts flagged values. |
 | `main.py` | FastAPI app wiring only (CORS, routers, request-metrics middleware, startup lifespan, test-dataset zip). |
 | `seed.py` | Seeds the 5 simulated tables, reviewer/admin demo accounts, and **25 ground-truth labeled merchants** (`expected_outcome` audit entries). |
-| `test_features.py` | **Offline E2E suite (76 checks)** via TestClient + throwaway SQLite — covers chaos faults, deferral, calibration, injection defense, concurrency, health, maintenance-archive safety, re-upload retirement, comma-separated status filter, self-healing OCR retry, live admin stats. Run `python test_features.py` from `backend/`. |
+| `test_features.py` | **Offline E2E suite (83 checks)** via TestClient + throwaway SQLite — covers chaos faults, deferral, calibration, injection defense, concurrency, health, maintenance-archive safety, re-upload retirement, comma-separated status filter, self-healing OCR retry, live admin stats, LLM key rotation, clean audit trail. Run `python test_features.py` from `backend/`. |
 
 **Known constraints:** `passlib==1.7.4` requires `bcrypt==4.0.1` pinned exactly (newer bcrypt breaks passlib). Groq's free tier is ~200K tokens/day **shared by OCR + LLM**; `LLM_FALLBACK_KEYS` from *other* Groq accounts rotate on 401/403/429 (same-account keys add nothing). Extraction requires a vision-capable model (`qwen/qwen3.8-27b` default; gpt-oss models are text-only on Groq).
 

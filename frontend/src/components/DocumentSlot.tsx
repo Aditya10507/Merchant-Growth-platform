@@ -82,7 +82,15 @@ function DocumentSlotBase({ docType, label, hint, onUploaded, currentStatus }: D
 
   const isInvalidFormat = displayedStatus?.verification_status === "invalid_format";
   const isTemporarilyUnavailable = displayedStatus?.verification_status === "temporarily_unavailable";
+  // OCR is still running on this document (only briefly visible — uploads
+  // await extraction before returning).
   const isVerifying = displayedStatus?.verification_status === "verifying";
+  // The document passed its format/OCR check and is accepted into the
+  // application. NO identity verification happens at upload time — the
+  // cross-document identity/LLM/external-source checks run later, when the
+  // reviewer clicks "Verify" on the submitted application. (Session 29:
+  // the old copy claimed identity was being verified here — it wasn't.)
+  const isAccepted = displayedStatus?.verification_status === "submitted";
 
   return (
     <div className="flex flex-col gap-3 rounded-md border border-gray-200 bg-white p-5">
@@ -125,7 +133,8 @@ function DocumentSlotBase({ docType, label, hint, onUploaded, currentStatus }: D
           {displayedStatus?.rejection_reason || "Document verification is temporarily unavailable. Please try again."}
         </Alert>
       )}
-      {isVerifying && <Alert variant="success">Valid document — verifying identity details…</Alert>}
+      {isVerifying && <Alert variant="info">Checking document format…</Alert>}
+      {isAccepted && <Alert variant="success">Valid document — format check passed.</Alert>}
     </div>
   );
 }

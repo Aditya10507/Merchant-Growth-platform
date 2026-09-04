@@ -640,6 +640,137 @@ def main() -> None:
           body["processed"] > 0 and 0.0 <= body["fraud_ring_rate"] <= 100.0)
 
     print()
+    print("Feature 10 — session 29 fixes: no fake 'verifying identity' state + LLM key rotation")
+    print("-" * 50)
+    # 10a: a document whose OCR + format check PASSES is accepted immediately
+    # (status "submitted"), never parked at "verifying". Identity/LLM/external
+    # verification is a LATER admin-triggered step — the merchant-facing flow
+    # must not imply identity is being verified at upload time.
+    import ocr as ocr_module2
+
+    db = SessionLocal()
+    m10 = Merchant(business_name="Accepted Doc Case", email="accepted@test.com",
+                   password_hash=hash_password("TestPass123"), role="merchant",
+                   onboarding_status="pending", is_test=False)
+    db.add(m10)
+    db.flush()
+    mid10 = m10.id
+    db.commit()
+    db.close()
+    r = client.post("/auth/login", json={"email": "accepted@test.com", "password": "TestPass123"})
+    M10H = {"Authorization": f"Bearer {r.json()['access_token']}"}
+
+    real_extract2 = ocr_module2.extract_structured_fields
+    def fake_extract2(file_path, doc_type):
+        base = {"PAN": {"pan_number": "AAAAA1015A", "name": "Test Merchant 15", "dob": "1990-01-01"},
+                "GST": {"gst_number": "27AAAAA1015A1Z5", "name": "Test Merchant 15"},
+                "BANK_PROOF": {"account_number": "100000000015", "ifsc": "HDFC0001234",
+                                "name": "Test Merchant 15"}}
+        return base[doc_type], 0.95, "AAAAA1015A"
+    ocr_module2.extract_structured_fields = fake_extract2
+    try:
+        r = client.post("/documents/upload", headers=M10H, params={"doc_type": "PAN"},
+                        files={"file": ("pan.png", b"\x89PNG\r\n\x1a\nx", "image/png")})
+        check("format-passing upload returns HTTP 201", r.status_code == 201,
+              f"HTTP {r.status_code}: {r.text[:200]}")
+        check("accepted doc is 'submitted' — never parked at 'verifying'",
+              r.json().get("verification_status") == "submitted",
+              f"got {r.json().get('verification_status')}")
+        # Merchant still pending (only 1 of 3 docs) but the doc itself is accepted.
+        r = client.get("/documents/merchant-status", headers=M10H)
+        check("merchant stays pending until all 3 docs present",
+              r.json()["onboarding_status"] == "pending")
+    finally:
+        ocr_module2.extract_structured_fields = real_extract2
+
+    # 10b: verify.py rotates across LLM_FALLBACK_KEYS when the primary key is
+    # exhausted (401/403/429) — the Session 29 root cause where admin
+    # verification deferred because the primary Groq key alone was spent even
+    # though fallback accounts still had budget.
+    import types as _types
+    import httpx as _httpx
+    from openai import RateLimitError as _RateLimitError
+
+    client.post("/admin/faults/reset", headers=AH)
+    attempted_keys: list[str] = []
+
+    def _make_429():
+        # A genuine openai.RateLimitError so the real `except APIError` path
+        # in verify.py catches it and rotates (not a stand-in exception).
+        request = _httpx.Request("POST", "https://api.groq.com/openai/v1/chat/completions")
+        return _RateLimitError("Rate limit reached",
+                               response=_httpx.Response(429, request=request), body={})
+
+    class _FakeCompletions:
+        def __init__(self, api_key):
+            self._api_key = api_key
+        def create(self, **kwargs):
+            attempted_keys.append(self._api_key)
+            if self._api_key == "primary-spent":
+                raise _make_429()
+            content = json.dumps({"overall_consistent": True,
+                                  "findings": [], "summary": "ok"})
+            return _types.SimpleNamespace(
+                choices=[_types.SimpleNamespace(message=_types.SimpleNamespace(content=content))])
+
+    class _FakeChat:
+        def __init__(self, api_key):
+            self.completions = _FakeCompletions(api_key)
+
+    class _FakeOpenAI:
+        def __init__(self, api_key, base_url=None):
+            self.chat = _FakeChat(api_key)
+
+    real_openai_cls = verify.OpenAI
+    real_get_keys = verify._get_api_keys
+    verify.OpenAI = _FakeOpenAI
+    verify._get_api_keys = lambda: ["primary-spent", "fallback-1"]
+    try:
+        result = verify.cross_verify_documents({"PAN": {"pan_number": "AAAAA1015A"}})
+        check("verify rotates to fallback key after primary 429", result.overall_consistent is True,
+              f"attempted={attempted_keys}")
+        check("rotation tried primary then fallback in order",
+              attempted_keys == ["primary-spent", "fallback-1"], f"got {attempted_keys}")
+    finally:
+        verify.OpenAI = real_openai_cls
+        verify._get_api_keys = real_get_keys
+
+    # 10c: the reviewer's merchant detail hides document-upload attempt noise.
+    # The audit trail the admin sees is merchant-level lifecycle events only
+    # (verification runs, deferrals, the human decision) — not "how many times
+    # the applicant uploaded an invalid PAN".
+    db = SessionLocal()
+    m11 = Merchant(business_name="Audit Clean Case", email="auditclean@test.com",
+                   password_hash=hash_password("TestPass123"), role="merchant",
+                   onboarding_status="submitted", is_test=False)
+    db.add(m11)
+    db.flush()
+    mid11 = m11.id
+    for doc_type, flds in [("PAN", {"pan_number": "AAAAA1015A", "name": "Test Merchant 15"}),
+                           ("GST", {"gst_number": "27AAAAA1015A1Z5", "name": "Test Merchant 15"}),
+                           ("BANK_PROOF", {"account_number": "100000000015", "ifsc": "HDFC0001234",
+                                            "name": "Test Merchant 15"})]:
+        d = Document(merchant_id=mid11, doc_type=doc_type, file_path=f"_tmp/{doc_type}.png",
+                     extracted_fields_json=json.dumps(flds),
+                     verification_status="submitted", is_active=True)
+        db.add(d)
+        db.flush()
+        # A document-level upload-attempt failure (noise) and a merchant-level event.
+        db.add(AuditLog(merchant_id=mid11, document_id=d.id, action="rejected",
+                        reason="Uploaded file does not appear to be a valid Pan document"))
+    db.add(AuditLog(merchant_id=mid11, action="verification_run",
+                    reason="Admin-triggered verification: 5 matched, 0 mismatched"))
+    db.commit()
+    db.close()
+    r = client.get(f"/admin/merchants/{mid11}", headers=AH)
+    detail = r.json()
+    actions = [e["action"] for e in detail["audit_trail"]]
+    check("admin audit trail keeps merchant-level lifecycle events",
+          "verification_run" in actions)
+    check("admin audit trail hides document-upload attempt noise",
+          all(a != "rejected" for a in actions), f"got {actions}")
+
+    print()
     print("=" * 50)
     print(f"RESULT: {PASS} passed, {FAIL} failed")
     sys.exit(1 if FAIL else 0)

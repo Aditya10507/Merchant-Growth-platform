@@ -20,7 +20,7 @@ A merchant signs up, uploads PAN / GST / bank-proof documents, and the system **
 |---|---|
 | Document verification latency (PAN / GST / Bank Proof) | **2.92s / 1.98s / 2.41s** — every doc verified in ≤ 3–4s, exact extractions |
 | Batch accuracy (`/admin/batch-test`, 25 labeled merchants) | **100%** — 0 false approvals, 0 unresolved exceptions |
-| Offline feature suite | **76/76 checks** (concurrency race, injection defense, quota recovery, self-healing OCR, admin stats) |
+| Offline feature suite | **83/83 checks** (concurrency race, injection defense, quota recovery, self-healing OCR, LLM key rotation, admin stats) |
 | Quota-exhaustion recovery | 3-key `LLM_FALLBACK_KEYS` rotation pool — live-tested with the primary key fully exhausted |
 
 Full methodology, baseline runs, and honest constraints: **[docs/PERFORMANCE.md](docs/PERFORMANCE.md)** · CI status: [![CI](https://github.com/Aditya10507/Merchant-Growth-platform/actions/workflows/ci.yml/badge.svg)](https://github.com/Aditya10507/Merchant-Growth-platform/actions/workflows/ci.yml)

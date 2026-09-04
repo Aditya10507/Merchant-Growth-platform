@@ -20,27 +20,88 @@ The prompt is deliberately strict:
 import json
 import logging
 
-from openai import OpenAI, APIError
+from openai import OpenAI, APIError, APIConnectionError, APITimeoutError
 
 from config import settings
 from schemas import LlmVerificationResult
 
 logger = logging.getLogger(__name__)
-_client: OpenAI | None = None
 
 
 class LlmVerificationError(RuntimeError):
     """Raised when the LLM call fails or returns an unparseable response."""
 
 
-def _get_client() -> OpenAI:
-    global _client
-    if _client is None:
-        _client = OpenAI(
-            api_key=settings.LLM_API_KEY,
-            base_url=settings.LLM_BASE_URL,
+def _get_api_keys() -> list[str]:
+    """Primary key first, then any fallback keys from other accounts.
+
+    Mirrors ocr.py's pool: Groq's free-tier limits are PER ACCOUNT (a
+    200K-token/day budget), so when the primary key is exhausted the
+    OCR layer rotates to LLM_FALLBACK_KEYS on 401/403/429. The LLM
+    cross-verification path MUST do the same — otherwise an exhausted
+    primary key defers every admin verification even when other
+    accounts still have budget (Session 29 root cause).
+    """
+    keys = [settings.LLM_API_KEY]
+    for k in settings.LLM_FALLBACK_KEYS:
+        k = k.strip()
+        if k and k not in keys:
+            keys.append(k)
+    if not keys or not keys[0]:
+        raise LlmVerificationError(
+            "LLM_API_KEY is not set. Get a free Groq key at https://console.groq.com "
+            "and add it as an environment variable: LLM_API_KEY=your_key_here"
         )
-    return _client
+    return keys
+
+
+_RETRYABLE_STATUS_CODES = {401, 403, 429}
+
+
+def _chat_completion(messages: list[dict], max_tokens: int) -> str:
+    """Calls the chat model, rotating across the key pool on
+    401/403/429 and transient network errors — same recovery contract
+    as ocr.py. Returns the raw text content.
+
+    Raises LlmVerificationError only when EVERY key failed on a
+    retryable error (or the failure was not retryable).
+    """
+    api_keys = _get_api_keys()
+    last_error: Exception | None = None
+    for key_index, api_key in enumerate(api_keys):
+        try:
+            client = OpenAI(api_key=api_key, base_url=settings.LLM_BASE_URL)
+            response = client.chat.completions.create(
+                model=settings.LLM_MODEL,
+                max_tokens=max_tokens,
+                messages=messages,
+            )
+            return (response.choices[0].message.content or "").strip()
+        except (APIConnectionError, APITimeoutError) as exc:
+            # Network blips are transient — try the next key.
+            last_error = exc
+            logger.warning(
+                "LLM call network error on key %d/%d: %s",
+                key_index + 1, len(api_keys), exc,
+            )
+            continue
+        except APIError as exc:
+            if exc.status_code in _RETRYABLE_STATUS_CODES:
+                # Rate limit / auth / permission — this key is spent or
+                # rejected; rotate to the next account.
+                last_error = exc
+                logger.warning(
+                    "LLM call failed on key %d/%d (HTTP %s): %s — rotating",
+                    key_index + 1, len(api_keys), exc.status_code, exc,
+                )
+                continue
+            # Non-retryable API error (bad request, server bug, etc.) —
+            # another key will not fix it.
+            raise LlmVerificationError(f"LLM API call failed: {exc}") from exc
+    # Every key failed on a retryable error.
+    raise LlmVerificationError(
+        f"LLM API call failed on all {len(api_keys)} key(s): {last_error}"
+    ) from last_error
 
 
 _SYSTEM_PROMPT = """You are a document verification assistant for a fintech \
@@ -117,19 +178,13 @@ def _cross_verify_impl(documents_fields: dict[str, dict[str, str]]) -> LlmVerifi
 
     user_content = json.dumps(documents_fields, ensure_ascii=False)
 
-    try:
-        response = _get_client().chat.completions.create(
-            model=settings.LLM_MODEL,
-            max_tokens=1024,
-            messages=[
-                {"role": "system", "content": _SYSTEM_PROMPT},
-                {"role": "user", "content": user_content},
-            ],
-        )
-    except APIError as exc:
-        raise LlmVerificationError(f"LLM API call failed: {exc}") from exc
-
-    raw_text = (response.choices[0].message.content or "").strip()
+    raw_text = _chat_completion(
+        messages=[
+            {"role": "system", "content": _SYSTEM_PROMPT},
+            {"role": "user", "content": user_content},
+        ],
+        max_tokens=1024,
+    )
 
     try:
         parsed = json.loads(raw_text)
@@ -174,15 +229,13 @@ def humanize_reason(technical_reason: str) -> str:
     rather than crashing or leaving the merchant with nothing.
     """
     try:
-        response = _get_client().chat.completions.create(
-            model=settings.LLM_MODEL,
-            max_tokens=200,
+        raw_text = _chat_completion(
             messages=[
                 {"role": "system", "content": _HUMANIZE_SYSTEM_PROMPT},
                 {"role": "user", "content": technical_reason},
             ],
+            max_tokens=200,
         )
-        raw_text = (response.choices[0].message.content or "").strip()
         return raw_text or technical_reason
     except Exception:
         # Humanizing is a nice-to-have, never a blocker. On any failure,
@@ -241,15 +294,13 @@ def generate_rejection_cause(mismatched_checks: list[dict[str, str]]) -> str:
     user_content = "\n".join(summary_lines)
 
     try:
-        response = _get_client().chat.completions.create(
-            model=settings.LLM_MODEL,
-            max_tokens=250,
+        raw_text = _chat_completion(
             messages=[
                 {"role": "system", "content": _REJECTION_CAUSE_PROMPT},
                 {"role": "user", "content": user_content},
             ],
+            max_tokens=250,
         )
-        raw_text = (response.choices[0].message.content or "").strip()
         return raw_text or _fallback_cause(mismatched_checks)
     except Exception:
         logger.warning("generate_rejection_cause failed, using fallback", exc_info=True)
