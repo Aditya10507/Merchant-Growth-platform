@@ -191,14 +191,24 @@ def _ensure_is_test_column() -> None:
     Alembic migrations have proven unreliable to run from that standalone
     path (Session 19: deploy failed with "column merchants.is_test does
     not exist" because the ORM selects the column before the migration
-    could apply). This helper guarantees the column exists (and backfills
-    it) on ANY dialect, idempotently, before any ORM query runs.
+    could apply). This helper guarantees the column exists on ANY
+    dialect, idempotently, before any ORM query runs.
 
     The Alembic migration in alembic/versions/ is still the source of
     truth for schema history; this is only the safety net that makes the
     seed-before-migrations startup ordering safe. New columns should go
     through Alembic normally — if a new column needs the same treatment,
     extend this helper.
+
+    NOTE (Session 24): the old version of this helper also ran a blanket
+    backfill that flagged EVERY merchant without an `expected_outcome`
+    audit entry as is_test=True on every boot. That auto-archived real
+    applicants (accounts created via signup have no expected_outcome) and
+    hid them from the admin queue — leaving only the seeded demo
+    businesses visible (and it bit a real account in Session 21b).
+    Archiving is now an explicit admin action only
+    (POST /admin/maintenance/clear-test-merchants); no account is ever
+    auto-hidden at startup.
     """
     import logging
 
@@ -213,19 +223,6 @@ def _ensure_is_test_column() -> None:
                 "ALTER TABLE merchants ADD COLUMN is_test BOOLEAN NOT NULL DEFAULT false"
             ))
             logger.info("Added missing merchants.is_test column (startup safety net).")
-        # Backfill: merchants without an expected_outcome audit entry are
-        # E2E/test-created accounts and can never be scored by batch-test.
-        # The value is bound as a real boolean (not the literal 1) because
-        # PostgreSQL rejects `SET boolean_col = 1` with DatatypeMismatch —
-        # SQLite tolerates it, which hid this until the first PG deploy.
-        conn.execute(
-            text(
-                "UPDATE merchants SET is_test = :val "
-                "WHERE role = 'merchant' AND id NOT IN "
-                "(SELECT merchant_id FROM audit_logs WHERE action = 'expected_outcome')"
-            ),
-            {"val": True},
-        )
 
 
 def init_db() -> None:

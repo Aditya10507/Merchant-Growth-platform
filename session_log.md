@@ -2042,4 +2042,28 @@ Uploading documents quickly (within ~2s of each other) made the 2nd/3rd document
 
 ---
 
+### Session 24 — admin queue shows only real applicants + fixed-viewport admin dashboard
+
+**Reported problem:** the admin panel's queue was full of seeded demo businesses ("Clean/Mismatch Test Business 0–14/0–9", submitted 31 Aug, all `@example.com`) and the page behaved like one long scrollable page; the merchant-detail pane scrolled away with it. The system-health card was also cluttering the panel.
+
+**Root cause (two parts):**
+1. The startup backfill in `db.py` (`_ensure_is_test_column`) auto-flagged EVERY merchant without an `expected_outcome` audit entry as `is_test=True` on every boot — which archived REAL applicants (signups have no label) and left only the seeded demo rows visible. (That backfill originally bit account 61 in Session 21b too.)
+2. `seed.py` created the 25 ground-truth merchants UN-archived (`is_test=False`), so they filled the queue even though they exist only as the labeled scoring set.
+
+**Code fixes (committed this session):**
+- `db.py`: removed the blanket auto-archive backfill — no account is ever hidden at startup; archiving is an explicit admin action only. (Kept the idempotent `is_test` column safety net.)
+- `seed.py`: ground-truth merchants are now created ARCHIVED (`is_test=True`) — the review queue shows only real applicants; batch-test + risk-eval still score them via their `expected_outcome` entries.
+- `admin.py run_batch_test` + `risk_eval.build_labeled_cases`: score the labeled set by `expected_outcome` REGARDLESS of the archive flag (previously they filtered `is_test == False`, so archived seeds would have silently dropped out of the accuracy reports).
+- `admin.py clear_test_merchants`: the "Archive test merchants" maintenance action now targets synthetic accounts by EMAIL PATTERN (`%@test.com`, `e2e_%@example.com`, `*_merchant_*@example.com`) instead of "no expected_outcome" — the old heuristic would have archived genuine signups (real applicants also have no label). New Feature 6 test section (5 checks) proves synthetic rows are archived and a gmail signup is never touched.
+- Frontend `Layout.tsx` + `AdminPage.tsx`: the admin panel is now a FIXED-VIEWPORT dashboard — page never scrolls; the applicants table and the merchant-detail pane each scroll internally (sticky header, `min-h-0` flex chain). The detail pane is stationary beside the queue. Removed the System-health card entirely from the admin UI (kept the backend `/admin/system-health` endpoint + health.py instrumentation for monitoring/ops use).
+
+**Live DB fix (applied directly to the deployed Postgres):**
+- Archived the 25 old seeded demo rows (36–60: `is_test=True`) — they stay in the batch-test/risk-eval labeled set but vanish from the queue.
+- Un-archived the 2 genuine signups (61 Aditya Builders, 90 Aditya Enterprises) that the old boot backfill had hidden.
+- Verified against the LIVE API: `/admin/merchants` now returns exactly those 2 real applicants; batch-test total on the old deployed code reads 2 until this push redeploys, after which it scores all 25 labeled merchants again.
+
+**Verification:** offline suite **59/59** (was 54, +5 maintenance checks) · frontend `tsc -b` + `vite build` clean · live queue probe clean.
+
+---
+
 *New sessions will be appended below.*

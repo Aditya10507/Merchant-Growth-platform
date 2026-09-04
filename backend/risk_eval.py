@@ -209,11 +209,13 @@ def _replay_seed_checks(db: Session, case: _LabeledCase) -> list[dict] | None:
 
 def build_labeled_cases(db: Session) -> list[_LabeledCase]:
     """Every merchant with a determinable label, scored under current weights."""
-    # Exclude archived test merchants (is_test=True) exactly like the
-    # batch-test report does — E2E runs pollute the labeled set.
-    merchants = db.query(Merchant).filter(
-        Merchant.role == "merchant", Merchant.is_test == False
-    ).all()
+    # Include ALL role=merchant rows regardless of the is_test archive
+    # flag (Session 24: seeded ground-truth merchants are created archived
+    # so they stay out of the admin review queue, but they remain the
+    # labeled set this report measures). Non-labeled merchants — E2E runs
+    # without ground truth, un-decided applicants — drop out below via the
+    # label gate, so they can never pollute the calibration.
+    merchants = db.query(Merchant).filter(Merchant.role == "merchant").all()
     cases: list[_LabeledCase] = []
     for merchant in merchants:
         label = _label_from_audit(db, merchant.id)

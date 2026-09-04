@@ -13,13 +13,16 @@ export function Layout({ children }: { children: ReactNode }) {
   const { session, logout } = useAuth();
 
   return (
-    <div className="flex min-h-screen bg-white">
+    /* Fixed viewport shell: the page itself never scrolls. Each screen
+       manages its own internal scroll regions (see AdminPage) — the whole
+       app stays a stationary dashboard, not one long scrollable page. */
+    <div className="flex h-screen overflow-hidden bg-white">
       {/* Sidebar */}
-      <aside className="flex w-56 flex-col bg-gray-900 text-gray-300">
+      <aside className="flex w-56 flex-shrink-0 flex-col bg-gray-900 text-gray-300">
         <div className="border-b border-gray-800 px-4 py-4 text-sm font-semibold text-white">
           Admin Panel
         </div>
-        <nav className="flex-1 px-2 py-4">
+        <nav className="flex-1 overflow-y-auto px-2 py-4">
           <a className="flex items-center gap-2 rounded-md border-l-2 border-white bg-gray-800 px-3 py-2 text-sm font-medium text-white">
             <LayoutDashboard className="h-4 w-4" />
             Applications
@@ -28,14 +31,16 @@ export function Layout({ children }: { children: ReactNode }) {
       </aside>
 
       {/* Main content */}
-      <div className="flex flex-1 flex-col">
-        <header className="flex items-center justify-between border-b border-gray-200 px-6 py-3">
+      <div className="flex min-w-0 flex-1 flex-col">
+        <header className="flex flex-shrink-0 items-center justify-between border-b border-gray-200 px-6 py-3">
           <span className="text-sm text-gray-500">{session?.business_name}</span>
           <button onClick={logout} className="flex items-center gap-1 text-sm text-gray-700 hover:text-black">
             <LogOut className="h-4 w-4" /> Log out
           </button>
         </header>
-        <main className="flex-1 overflow-y-auto p-6">{children}</main>
+        {/* overflow-hidden: children own their scrolling; min-h-0 lets the
+            flex child actually shrink below its content height */}
+        <main className="min-h-0 flex-1 overflow-hidden">{children}</main>
       </div>
     </div>
   );

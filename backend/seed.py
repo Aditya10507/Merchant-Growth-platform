@@ -75,11 +75,16 @@ def seed_accounts(db) -> None:
 
 def seed_test_merchants(db) -> None:
     """
-    Creates synthetic merchant accounts pre-tagged with an expected
-    outcome, so /admin/batch-test can measure real accuracy. These
-    accounts don't have uploaded documents by default — they exist so
-    the batch-test scoring logic and reviewer views have data to show
-    even before a live demo upload happens.
+    Creates synthetic ground-truth merchant accounts pre-tagged with an
+    expected outcome, so /admin/batch-test and /admin/risk-eval can
+    measure real accuracy against known answers.
+
+    These accounts are created ARCHIVED (is_test=True, Session 24): they
+    exist purely as the labeled scoring set — the admin review queue must
+    show only real applicants, never demo rows. The accuracy reports
+    score the labeled set by its `expected_outcome` audit entries
+    regardless of the is_test flag (see admin.py run_batch_test and
+    risk_eval.build_labeled_cases).
     """
     for i, pan in enumerate(CLEAN_PAN_NUMBERS[:15]):
         email = f"clean_merchant_{i}@example.com"
@@ -91,6 +96,7 @@ def seed_test_merchants(db) -> None:
             password_hash=hash_password("TestPass123"),
             role="merchant",
             onboarding_status="active",
+            is_test=True,
         )
         db.add(merchant)
         db.flush()
@@ -106,6 +112,7 @@ def seed_test_merchants(db) -> None:
             password_hash=hash_password("TestPass123"),
             role="merchant",
             onboarding_status="flagged",
+            is_test=True,
         )
         db.add(merchant)
         db.flush()

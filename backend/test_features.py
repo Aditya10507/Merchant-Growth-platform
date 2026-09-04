@@ -417,6 +417,42 @@ def main() -> None:
           r.json()["requests"]["total"] >= 1)
 
     print()
+    print("Feature 6 — maintenance archive targets only synthetic accounts")
+    print("-" * 50)
+    # Session 24: real applicants sign up with real emails and have NO
+    # expected_outcome audit entry — so the old "no label => test data"
+    # heuristic would archive them. The maintenance action must target
+    # only the reserved email patterns the test tooling registers with.
+    db = SessionLocal()
+    # A genuine signup: real email, no expected_outcome label (must never
+    # be auto-archived by the maintenance action).
+    db.add(Merchant(business_name="Genuine Signup", email="real.shop@gmail.com",
+                    password_hash=hash_password("TestPass123"), role="merchant",
+                    onboarding_status="pending", is_test=False))
+    # Simulate a PRE-Session-24 seeded row still in the wild (the current
+    # seed creates these archived; older databases have them visible) and
+    # a live E2E run account.
+    seeded_row = db.query(Merchant).filter(Merchant.email == "clean_merchant_0@example.com").first()
+    if seeded_row is not None:
+        seeded_row.is_test = False
+    db.add(Merchant(business_name="E2E Run", email="e2e_clean_999999999@example.com",
+                    password_hash=hash_password("TestPass123"), role="merchant",
+                    onboarding_status="pending", is_test=False))
+    db.commit()
+    db.close()
+
+    r = client.post("/admin/maintenance/clear-test-merchants", headers=AH)
+    check("maintenance action succeeds", r.status_code == 200)
+    archived = set(r.json()["archived_emails"])
+    check("archives old seeded ground-truth row", "clean_merchant_0@example.com" in archived)
+    check("archives live E2E run account", "e2e_clean_999999999@example.com" in archived)
+    check("does NOT archive a genuine gmail signup", "real.shop@gmail.com" not in archived)
+    db = SessionLocal()
+    still_real = db.query(Merchant).filter(Merchant.email == "real.shop@gmail.com").first()
+    check("genuine signup stays visible in the admin queue", still_real is not None and not still_real.is_test)
+    db.close()
+
+    print()
     print("=" * 50)
     print(f"RESULT: {PASS} passed, {FAIL} failed")
     sys.exit(1 if FAIL else 0)

@@ -26,7 +26,7 @@ import logging
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import exists as sa_exists, update as sa_update
+from sqlalchemy import exists as sa_exists, or_ as sa_or_, update as sa_update
 from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
@@ -474,20 +474,33 @@ def clear_test_merchants(
     the /admin/batch-test accuracy report (and the admin queue) reads
     correctly on a live demo database.
 
-    A merchant is considered test data when it has NO `expected_outcome`
-    audit entry — the seeded ground-truth merchants all have one, and every
-    test-run account (unique emails per run) does not. Archiving is a soft
-    flag (Merchant.is_test=True): rows and audit trails are preserved, and
-    the action itself is logged on the admin's own audit trail.
+    Session 24 note: a merchant is now considered test data by its EMAIL
+    PATTERN, not by the absence of an `expected_outcome` audit entry —
+    real applicants who sign up on the live site also have no
+    `expected_outcome` (that note is written only by seed.py for the
+    ground-truth set), so the old "no label => test data" heuristic would
+    archive genuine signups. Synthetic accounts are recognisable because
+    every test tool in this repo registers with a reserved domain:
+      - E2E suites:       {suffix}@test.com
+      - Live E2E runs:    e2e_*@example.com
+      - Seed ground truth: clean_merchant_*@example.com /
+                           mismatch_merchant_*@example.com
+                          (created archived since Session 24; this clause
+                           only catches pre-change rows still in the wild)
+
+    Archiving is a soft flag (Merchant.is_test=True): rows and audit
+    trails are preserved, and the action itself is logged on the admin's
+    own audit trail. Real-email signups are never touched.
     """
-    has_expected_outcome = sa_exists().where(
-        AuditLog.merchant_id == Merchant.id,
-        AuditLog.action == "expected_outcome",
-    )
     test_merchants = db.query(Merchant).filter(
         Merchant.role == "merchant",
         Merchant.is_test == False,
-        ~has_expected_outcome,
+        sa_or_(
+            Merchant.email.ilike("%@test.com"),
+            Merchant.email.ilike("e2e_%@example.com"),
+            Merchant.email.ilike("clean_merchant_%@example.com"),
+            Merchant.email.ilike("mismatch_merchant_%@example.com"),
+        ),
     ).all()
 
     archived_emails = [m.email for m in test_merchants]
@@ -519,18 +532,26 @@ def run_batch_test(
     _admin: Merchant = Depends(require_role("admin")),
 ) -> BatchTestReport:
     """
-    Reports accuracy across every non-archived merchant currently in the
-    system. Archived test merchants (is_test=True) are excluded so the
-    accuracy % is computed over scorable records only.
-    Intended to be run against the seeded synthetic dataset (see
-    seed.py) so judges can see measured accuracy, not just a live demo.
+    Reports accuracy across the system's LABELED ground-truth merchants.
 
-    Note: "correctness" here is derived from each seeded merchant's
-    `expected_outcome` audit note written by seed.py, so this reflects
-    ground truth built into the test data — not a guess.
+    The scoring set is every merchant carrying an `expected_outcome`
+    audit entry (written by seed.py for the synthetic dataset) — REGARDLESS
+    of the is_test archive flag (Session 24: seeded demo merchants are
+    created archived so they never pollute the admin review queue, but
+    they must still participate in this accuracy report). Accounts
+    without ground truth (E2E runs, real applicants) are never scorable
+    and are excluded.
+
+    Note: "correctness" derives from each seeded merchant's
+    `expected_outcome` audit note written by seed.py — ground truth
+    built into the test data, not a guess.
     """
     merchants = db.query(Merchant).filter(
-        Merchant.role == "merchant", Merchant.is_test == False
+        Merchant.role == "merchant",
+        sa_exists().where(
+            AuditLog.merchant_id == Merchant.id,
+            AuditLog.action == "expected_outcome",
+        ),
     ).all()
     total = len(merchants)
     correctly_approved = 0

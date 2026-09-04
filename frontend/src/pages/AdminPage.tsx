@@ -17,7 +17,6 @@ import {
   setFault,
   resetFaults,
   runRiskEval,
-  getSystemHealth,
   ApiError,
 } from "../api";
 import { useAuth } from "../AuthContext";
@@ -36,12 +35,10 @@ import type {
   DocumentStatus,
   FaultName,
   FaultState,
-  HealthBucket,
   MaintenanceResult,
   MerchantDetail,
   MerchantSummary,
   RiskEvalReport,
-  SystemHealth,
 } from "../types";
 
 const STATUS_TABS = [
@@ -83,8 +80,6 @@ function AdminPageBase() {
   const [faultError, setFaultError] = useState<string | null>(null);
   // Feature 2: empirical risk calibration
   const [riskEvalState, setRiskEvalState] = useState<AsyncState<RiskEvalReport>>({ status: "idle" });
-  // Feature 4: live system-health view
-  const [healthState, setHealthState] = useState<AsyncState<SystemHealth>>({ status: "idle" });
 
   const fetchMerchants = useCallback(async (tab: StatusTab) => {
     setListState({ status: "loading" });
@@ -231,197 +226,196 @@ function AdminPageBase() {
     }
   }, []);
 
-  // --- Feature 4: poll the live system-health view while the panel is open ---
-  const refreshHealth = useCallback(async () => {
-    try {
-      const data = await getSystemHealth();
-      setHealthState({ status: "success", data });
-    } catch (error) {
-      setHealthState({
-        status: "error",
-        message: error instanceof ApiError ? error.message : "Could not load system health.",
-      });
-    }
-  }, []);
-
-  useEffect(() => {
-    if (!isAdmin) return;
-    refreshHealth();
-    const timer = setInterval(refreshHealth, 15000);
-    return () => clearInterval(timer);
-  }, [isAdmin, refreshHealth]);
-
   return (
     <Layout>
-      <h1 className="mb-2 text-xl font-semibold text-gray-900">
-        Merchant Verification Panel
-      </h1>
-      <p className="mb-6 text-sm text-gray-500">
-        Review submitted applications, run verification checks, and decide
-        whether to activate or reject each account.
-      </p>
-
-      {/* ============================================================
-          Admin-only engineering tools: failure-injection demo mode
-          (Feature 1) and empirical risk calibration (Feature 2). These
-          are the Failure Recovery + AI Judgment demo artifacts — a
-          reviewer never sees them.
-      ============================================================ */}
-      {isAdmin && (
-        <div className="mb-6 grid grid-cols-1 gap-4 lg:grid-cols-2">
-          {/* Chaos panel: simulate outages, watch graceful degradation */}
-          <ChaosPanel
-            faultState={faultState}
-            faultError={faultError}
-            onToggle={handleToggleFault}
-            onReset={handleResetFaults}
-          />
-
-          {/* Risk calibration: measure the weights against labeled data */}
-          <RiskEvalCard
-            state={riskEvalState}
-            onRun={handleRunRiskEval}
-          />
-
-          {/* Live system health: OCR/LLM success rates, latencies, errors */}
-          <SystemHealthCard
-            state={healthState}
-            onRefresh={refreshHealth}
-          />
-        </div>
-      )}
-
-      {/* Status filter tabs + maintenance action */}
-      <div className="mb-6 flex flex-wrap items-start justify-between gap-3">
-        <nav aria-label="Filter merchants by status" className="flex gap-2 flex-wrap">
-          {STATUS_TABS.map((tab) => (
-            <button
-              key={tab}
-              onClick={() => setActiveTab(tab)}
-              className={`rounded-md px-3 py-1.5 text-sm font-medium transition-colors duration-150 ${
-                activeTab === tab
-                  ? "bg-gray-900 text-white"
-                  : "bg-white text-gray-600 border border-gray-200 hover:bg-gray-50"
-              }`}
-              aria-pressed={activeTab === tab}
-            >
-              {tab === "All" ? "All" : STATUS_LABELS[tab] ?? tab}
-            </button>
-          ))}
-        </nav>
-
-        {isAdmin && (
-          <div className="flex flex-col items-end gap-1.5">
-            <Button
-              variant="secondary"
-              onClick={handleClearTestMerchants}
-              isLoading={maintenanceState.status === "loading"}
-            >
-              Archive test merchants
-            </Button>
-            <p className="text-right text-xs text-gray-400">
-              Removes E2E/test-run accounts from this queue and the batch-test
-              accuracy report. Their records are preserved, not deleted.
+      {/* Fixed dashboard column: header blocks are pinned (shrink-0); the
+          review row below is the only thing that flexes, and its two panes
+          (queue + detail) scroll internally instead of moving the page. */}
+      <div className="flex h-full flex-col overflow-hidden">
+        {/* Page header */}
+        <div className="flex flex-shrink-0 items-baseline justify-between gap-4 px-6 pt-5 pb-3">
+          <div>
+            <h1 className="text-xl font-semibold text-gray-900">
+              Merchant Verification Panel
+            </h1>
+            <p className="mt-0.5 text-sm text-gray-500">
+              Review submitted applications, run verification checks, and decide
+              whether to activate or reject each account.
             </p>
-            {maintenanceState.status === "success" && (
-              <Alert variant="success">
-                Archived {maintenanceState.data.archived_count} test merchant
-                {maintenanceState.data.archived_count === 1 ? "" : "s"}. Batch test
-                now scores {maintenanceState.data.remaining_count} merchant
-                {maintenanceState.data.remaining_count === 1 ? "" : "s"}.
-              </Alert>
-            )}
-            {maintenanceState.status === "error" && (
-              <Alert variant="error">{maintenanceState.message}</Alert>
-            )}
+          </div>
+        </div>
+
+        {/* ============================================================
+            Admin-only engineering tools: failure-injection demo mode
+            (Feature 1) and empirical risk calibration (Feature 2). These
+            are the Failure Recovery + AI Judgment demo artifacts — a
+            reviewer never sees them.
+        ============================================================ */}
+        {isAdmin && (
+          <div className="grid flex-shrink-0 grid-cols-1 gap-4 px-6 pb-3 lg:grid-cols-2">
+            {/* Chaos panel: simulate outages, watch graceful degradation */}
+            <ChaosPanel
+              faultState={faultState}
+              faultError={faultError}
+              onToggle={handleToggleFault}
+              onReset={handleResetFaults}
+            />
+
+            {/* Risk calibration: measure the weights against labeled data */}
+            <RiskEvalCard
+              state={riskEvalState}
+              onRun={handleRunRiskEval}
+            />
           </div>
         )}
-      </div>
 
-      <div className="flex gap-6">
-        {/* Merchant list — data table */}
-        <section className="flex-1" aria-label="Merchant list">
-          {listState.status === "loading" && (
-            <p className="text-sm text-gray-500" role="status">Loading merchants…</p>
+        {/* Status filter tabs + maintenance action */}
+        <div className="flex flex-shrink-0 flex-wrap items-start justify-between gap-3 px-6 pb-4">
+          <nav aria-label="Filter merchants by status" className="flex flex-wrap gap-2">
+            {STATUS_TABS.map((tab) => (
+              <button
+                key={tab}
+                onClick={() => setActiveTab(tab)}
+                className={`rounded-md px-3 py-1.5 text-sm font-medium transition-colors duration-150 ${
+                  activeTab === tab
+                    ? "bg-gray-900 text-white"
+                    : "bg-white text-gray-600 border border-gray-200 hover:bg-gray-50"
+                }`}
+                aria-pressed={activeTab === tab}
+              >
+                {tab === "All" ? "All" : STATUS_LABELS[tab] ?? tab}
+              </button>
+            ))}
+          </nav>
+
+          {isAdmin && (
+            <div className="flex flex-col items-end gap-1.5">
+              <Button
+                variant="secondary"
+                onClick={handleClearTestMerchants}
+                isLoading={maintenanceState.status === "loading"}
+              >
+                Archive test merchants
+              </Button>
+              <p className="text-right text-xs text-gray-400">
+                Removes E2E/test-run accounts from this queue and the batch-test
+                accuracy report. Their records are preserved, not deleted.
+              </p>
+              {maintenanceState.status === "success" && (
+                <Alert variant="success">
+                  Archived {maintenanceState.data.archived_count} test merchant
+                  {maintenanceState.data.archived_count === 1 ? "" : "s"}. Batch test
+                  now scores {maintenanceState.data.remaining_count} merchant
+                  {maintenanceState.data.remaining_count === 1 ? "" : "s"}.
+                </Alert>
+              )}
+              {maintenanceState.status === "error" && (
+                <Alert variant="error">{maintenanceState.message}</Alert>
+              )}
+            </div>
           )}
-          {listState.status === "error" && <Alert variant="error">{listState.message}</Alert>}
+        </div>
 
-          {listState.status === "success" && listState.data.length === 0 && (
-            <p className="text-sm text-gray-500">No merchants found for this filter.</p>
-          )}
-
-          {listState.status === "success" && listState.data.length > 0 && (
-            <table className="w-full border-collapse text-sm">
-              <thead>
-                <tr className="border-b border-gray-200 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
-                  <th className="py-2 pr-4">Business</th>
-                  <th className="py-2 pr-4">Status</th>
-                  <th className="py-2 pr-4">Risk</th>
-                  <th className="py-2 pr-4">Submitted</th>
-                  <th className="py-2"></th>
-                </tr>
-              </thead>
-              <tbody>
-                {listState.data.map((merchant) => (
-                  <tr
-                    key={merchant.merchant_id}
-                    className={`border-b border-gray-100 hover:bg-gray-50 cursor-pointer ${
-                      selectedMerchantId === merchant.merchant_id ? "bg-gray-50" : ""
-                    }`}
-                    onClick={() => selectMerchant(merchant.merchant_id)}
-                    tabIndex={0}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" || e.key === " ") {
-                        e.preventDefault();
-                        selectMerchant(merchant.merchant_id);
-                      }
-                    }}
-                  >
-                    <td className="py-3 pr-4 font-medium text-gray-900">{merchant.business_name}</td>
-                    <td className="py-3 pr-4">
-                      <StatusBadge status={merchant.onboarding_status as DocumentStatus["verification_status"]} />
-                    </td>
-                    <td className="py-3 pr-4">
-                      <RiskBadge score={merchant.risk_score} />
-                    </td>
-                    <td className="py-3 pr-4 text-gray-500">{formatDate(merchant.created_at)}</td>
-                    <td className="py-3">
-                      <Button variant="secondary" onClick={(e) => { e.stopPropagation(); selectMerchant(merchant.merchant_id); }}>
-                        View
-                      </Button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </section>
-
-        {/* Detail panel */}
-        {selectedMerchantId !== null && (
-          <section
-            className="w-96 flex-shrink-0 rounded-md border border-gray-200 bg-white p-5"
-            aria-label="Merchant detail"
-          >
-            {detailState.status === "loading" && (
-              <p className="text-sm text-gray-500" role="status">Loading merchant detail…</p>
+        {/* Review row: queue scrolls internally, detail panel is a fixed
+            stationary pane that never scrolls away with the page. */}
+        <div className="flex min-h-0 flex-1 gap-6 px-6 pb-6">
+          {/* Merchant list — data table, its own vertical scroll region */}
+          <section className="flex min-h-0 min-w-0 flex-1 flex-col rounded-md border border-gray-200 bg-white" aria-label="Merchant list">
+            {listState.status === "loading" && (
+              <p className="p-4 text-sm text-gray-500" role="status">Loading merchants…</p>
             )}
-            {detailState.status === "error" && <Alert variant="error">{detailState.message}</Alert>}
+            {listState.status === "error" && (
+              <div className="p-4"><Alert variant="error">{listState.message}</Alert></div>
+            )}
 
-            {detailState.status === "success" && (
-              <MerchantDetailView
-                detail={detailState.data}
-                verifyState={verifyState}
-                handleVerify={handleVerify}
-                resolveNote={resolveNote}
-                setResolveNote={setResolveNote}
-                handleDecide={handleDecide}
-                resolveState={resolveState}
-                closeDetail={closeDetail}
-              />
+            {listState.status === "success" && listState.data.length === 0 && (
+              <div className="flex flex-1 flex-col items-center justify-center gap-2 p-8 text-center">
+                <p className="text-sm font-medium text-gray-900">No applicants {activeTab === "All" ? "yet" : `with status “${STATUS_LABELS[activeTab] ?? activeTab}”`}</p>
+                <p className="text-xs text-gray-500">
+                  New merchant sign-ups appear here as they submit their documents.
+                </p>
+              </div>
+            )}
+
+            {listState.status === "success" && listState.data.length > 0 && (
+              <div className="min-h-0 flex-1 overflow-y-auto">
+                <table className="w-full border-collapse text-sm">
+                  <thead className="sticky top-0 z-10 bg-white">
+                    <tr className="border-b border-gray-200 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
+                      <th className="py-2.5 pl-4 pr-4">Business</th>
+                      <th className="py-2.5 pr-4">Status</th>
+                      <th className="py-2.5 pr-4">Risk</th>
+                      <th className="py-2.5 pr-4">Submitted</th>
+                      <th className="py-2.5 pr-4"></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {listState.data.map((merchant) => (
+                      <tr
+                        key={merchant.merchant_id}
+                        className={`cursor-pointer border-b border-gray-100 hover:bg-gray-50 ${
+                          selectedMerchantId === merchant.merchant_id ? "bg-gray-100" : ""
+                        }`}
+                        onClick={() => selectMerchant(merchant.merchant_id)}
+                        tabIndex={0}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" || e.key === " ") {
+                            e.preventDefault();
+                            selectMerchant(merchant.merchant_id);
+                          }
+                        }}
+                      >
+                        <td className="py-3 pl-4 pr-4 font-medium text-gray-900">{merchant.business_name}</td>
+                        <td className="py-3 pr-4">
+                          <StatusBadge status={merchant.onboarding_status as DocumentStatus["verification_status"]} />
+                        </td>
+                        <td className="py-3 pr-4">
+                          <RiskBadge score={merchant.risk_score} />
+                        </td>
+                        <td className="py-3 pr-4 text-gray-500">{formatDate(merchant.created_at)}</td>
+                        <td className="py-3 pr-4 text-right">
+                          <Button variant="secondary" onClick={(e) => { e.stopPropagation(); selectMerchant(merchant.merchant_id); }}>
+                            View
+                          </Button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             )}
           </section>
-        )}
+
+          {/* Detail panel — stationary pane; only its content scrolls */}
+          {selectedMerchantId !== null && (
+            <section
+              className="flex w-96 flex-shrink-0 flex-col overflow-hidden rounded-md border border-gray-200 bg-white"
+              aria-label="Merchant detail"
+            >
+              {detailState.status === "loading" && (
+                <p className="p-4 text-sm text-gray-500" role="status">Loading merchant detail…</p>
+              )}
+              {detailState.status === "error" && (
+                <div className="p-4"><Alert variant="error">{detailState.message}</Alert></div>
+              )}
+
+              {detailState.status === "success" && (
+                <div className="min-h-0 flex-1 overflow-y-auto p-5">
+                  <MerchantDetailView
+                    detail={detailState.data}
+                    verifyState={verifyState}
+                    handleVerify={handleVerify}
+                    resolveNote={resolveNote}
+                    setResolveNote={setResolveNote}
+                    handleDecide={handleDecide}
+                    resolveState={resolveState}
+                    closeDetail={closeDetail}
+                  />
+                </div>
+              )}
+            </section>
+          )}
+        </div>
       </div>
     </Layout>
   );
@@ -878,132 +872,6 @@ function CalibrationReport({ report, onRerun }: { report: RiskEvalReport; onReru
 
       <div>
         <Button variant="secondary" onClick={onRerun}>Run again</Button>
-      </div>
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Feature 4: Live system health — OCR/LLM success rates, latencies, errors
-// ---------------------------------------------------------------------------
-
-function formatUptime(totalSeconds: number): string {
-  const s = Math.floor(totalSeconds);
-  const hours = Math.floor(s / 3600);
-  const minutes = Math.floor((s % 3600) / 60);
-  const seconds = s % 60;
-  if (hours > 0) return `${hours}h ${minutes}m`;
-  if (minutes > 0) return `${minutes}m ${seconds}s`;
-  return `${seconds}s`;
-}
-
-function fmtRate(value: number | null): string {
-  return value === null ? "—" : `${value.toFixed(1)}%`;
-}
-
-function fmtMs(value: number | null): string {
-  return value === null ? "—" : `${value.toFixed(0)} ms`;
-}
-
-interface SystemHealthCardProps {
-  state: AsyncState<SystemHealth>;
-  onRefresh: () => void;
-}
-
-function SystemHealthCardBase({ state, onRefresh }: SystemHealthCardProps) {
-  return (
-    <section className="rounded-md border border-gray-200 bg-white p-4">
-      <div className="mb-1 flex items-center justify-between">
-        <h2 className="text-sm font-semibold text-gray-900">System health</h2>
-        <Button variant="secondary" onClick={onRefresh} className="px-2 py-1 text-xs">
-          Refresh
-        </Button>
-      </div>
-      <p className="mb-3 text-xs text-gray-500">
-        Rolling success rates and latencies over the last hour on this
-        instance. Auto-refreshes every 15s.
-      </p>
-
-      {state.status === "loading" && (
-        <p className="text-sm text-gray-500" role="status">Loading health…</p>
-      )}
-      {state.status === "error" && (
-        <>
-          <Alert variant="error">{state.message}</Alert>
-          <div className="mt-2">
-            <Button variant="secondary" onClick={onRefresh}>Retry</Button>
-          </div>
-        </>
-      )}
-      {state.status === "success" && <HealthReport health={state.data} />}
-    </section>
-  );
-}
-
-const SystemHealthCard = memo(SystemHealthCardBase);
-
-function ServiceRow({ label, bucket }: { label: string; bucket: HealthBucket }) {
-  return (
-    <div className="rounded-md border border-gray-200 bg-gray-50 p-2">
-      <div className="flex items-center justify-between">
-        <p className="text-xs font-medium text-gray-900">{label}</p>
-        <span
-          className={`rounded px-1.5 py-0.5 text-xs font-semibold ${
-            bucket.success_rate === null
-              ? "bg-gray-200 text-gray-500"
-              : bucket.success_rate >= 95
-                ? "bg-gray-900 text-white"
-                : bucket.success_rate >= 50
-                  ? "bg-gray-300 text-gray-900"
-                  : "bg-gray-200 text-gray-900"
-          }`}
-        >
-          {bucket.success_rate === null ? "no data" : `${bucket.success_rate.toFixed(1)}% ok`}
-        </span>
-      </div>
-      <p className="mt-1 text-xs text-gray-500">
-        {bucket.count} call{bucket.count === 1 ? "" : "s"} · avg {fmtMs(bucket.avg_latency_ms)} ·
-        p95 {fmtMs(bucket.p95_latency_ms)} · {bucket.failed} failed
-      </p>
-    </div>
-  );
-}
-
-function HealthReport({ health }: { health: SystemHealth }) {
-  return (
-    <div className="flex flex-col gap-2 text-xs">
-      <div className="flex items-center justify-between">
-        <p className="text-gray-500">
-          Uptime <span className="font-semibold text-gray-900">{formatUptime(health.uptime_seconds)}</span> ·
-          window: last {Math.round(health.window_seconds / 60)} min
-        </p>
-        {health.active_faults.length > 0 && (
-          <span className="rounded bg-gray-900 px-1.5 py-0.5 font-semibold text-white">
-            ⚠ faults: {health.active_faults.join(", ")}
-          </span>
-        )}
-      </div>
-
-      <ServiceRow label="Document extraction (OCR/vision)" bucket={health.ocr} />
-      <ServiceRow label="LLM cross-verification" bucket={health.llm} />
-
-      <div className="rounded-md border border-gray-200 bg-gray-50 p-2">
-        <div className="flex items-center justify-between">
-          <p className="text-xs font-medium text-gray-900">HTTP requests</p>
-          <span
-            className={`rounded px-1.5 py-0.5 text-xs font-semibold ${
-              health.requests.error_rate === null || health.requests.errors_5xx === 0
-                ? "bg-gray-200 text-gray-500"
-                : "bg-gray-900 text-white"
-            }`}
-          >
-            {health.requests.errors_5xx} × 5xx
-          </span>
-        </div>
-        <p className="mt-1 text-gray-500">
-          {health.requests.total} request{health.requests.total === 1 ? "" : "s"} ·
-          error rate {fmtRate(health.requests.error_rate)} · avg {fmtMs(health.requests.avg_latency_ms)}
-        </p>
       </div>
     </div>
   );
