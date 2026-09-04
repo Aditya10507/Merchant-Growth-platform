@@ -423,10 +423,16 @@ def get_merchant_status(
     merchant: Merchant = Depends(get_current_merchant),
     db: Session = Depends(get_db),
 ) -> MerchantStatusResponse:
-    """Returns the merchant's onboarding status and all active documents."""
+    """Returns the merchant's onboarding status and all active documents.
+
+    Documents are returned newest-first (id desc). The dashboard picks the
+    first document of each type per slot, so without this ordering a stale
+    older upload (e.g. an invalid_format row from a previous attempt) would
+    shadow the merchant's latest upload on every login.
+    """
     documents = db.query(Document).filter(
         Document.merchant_id == merchant.id, Document.is_active == True
-    ).all()
+    ).order_by(Document.id.desc()).all()
     return MerchantStatusResponse(
         merchant_id=merchant.id,
         onboarding_status=merchant.onboarding_status,

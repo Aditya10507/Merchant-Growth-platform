@@ -1909,4 +1909,33 @@ Implemented three demo-visible engineering features the user asked for (from the
 
 ---
 
+## Session 21b — Bugfix: stale invalid-format documents shadowing the user's uploads (September 4, 2026)
+
+### What happened
+User reported that logging into their account (adityaws10507@gmail.com, merchant id 61) and uploading documents showed "Uploaded file does not appear to be a valid Bank Proof document" — a message that had been REMOVED from the code on Sept 1 (commit 62832af). Investigation traced it to the LIVE DATABASE, not the code:
+
+1. **Stale document rows.** Merchant 61 had 16 active documents from Sept 1–4, several stuck at `invalid_format` with the old pre-Sept-1 `rejection_reason` text baked into the row (e.g. "Uploaded file does not appear to be a valid Bank Proof document"). `GET /documents/merchant-status` returned them in insertion order and the dashboard's `find(doc_type)` picked the FIRST per type — so the old invalid row displayed on every login, forever.
+2. **Account archived.** The maintenance cleanup (`/admin/maintenance/clear-test-merchants`) had flagged merchant 61 as `is_test=True` (it has no `expected_outcome` entry), hiding it from the admin queue.
+3. **Groq daily quota exhausted.** Independent of the above, the free tier's 200K tokens/day was nearly exhausted (Used 199423/200000 at test time), so fresh uploads were also returning `temporarily_unavailable`. This is a temporary account-level limit, not a code bug.
+
+### Code changes
+| File | Change |
+|---|---|
+| `backend/documents.py` | `get_merchant_status` now orders active documents **newest-first** (`Document.id.desc()`) so the dashboard's per-slot `find()` shows the merchant's LATEST upload instead of a stale older row. Previously an old `invalid_format` attempt permanently shadowed new uploads on every page load. |
+
+### Live data fix (direct DB, via backend/.env DATABASE_URL)
+- `merchants SET is_test=false, onboarding_status='pending'` for merchant 61 — account un-archived, back in the admin queue.
+- `documents SET is_active=false` for all 16 of merchant 61's stale rows — soft-retired (audit trail preserved), dashboard now shows a clean slate.
+
+### Verification
+- Local TestClient repro: old `invalid_format` row (old wording) + newer `verifying` row for the same doc_type → `merchant-status` now returns the newer row first. Pass.
+- `py_compile` clean.
+- Live account now: `pending`, 0 active documents, `is_test=false`.
+
+### Notes / limitations
+- Groq's daily token quota resets on its own (free tier, ~200K tokens/day); new uploads will extract normally once it rolls over, or earlier if `LLM_FALLBACK_KEYS` from other accounts are added (each account has its own quota — same-account keys add nothing).
+- This is the second time a maintenance-style cleanup bit a real account (see Session 19's archive semantics). The is_test flag remains the project's chosen test-vs-real discriminator; flagged accounts can be un-archived manually as done here.
+
+---
+
 *New sessions will be appended below.*
