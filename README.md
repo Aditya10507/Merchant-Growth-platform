@@ -88,239 +88,116 @@ Full methodology, baseline runs, and honest constraints: [docs/PERFORMANCE.md](d
 
 ## Architecture
 
-The system follows one rule above all others: **the AI recommends, the human decides.** The AI and processing layers handle document reading, matching, validation, and risk scoring. They produce findings and a recommendation, never a decision. A human admin always makes the final approve or reject call, and every action is written to an audit trail.
-
-**Color code used in the diagrams:** blue = user interfaces and clients, light blue = system and infrastructure, light green = API layer, green = AI and processing, orange = external services and sources, pink = data stores, red = human decision points.
-
-### 1. System Architecture Diagram
+### System Architecture
 
 ```mermaid
-flowchart TB
-    classDef client fill:#2563eb,stroke:#1e40af,color:#ffffff,font-weight:bold
-    classDef infra fill:#bae6fd,stroke:#0369a1,color:#0c4a6e
-    classDef api fill:#ecfccb,stroke:#65a30d,color:#3f6212
-    classDef ai fill:#dcfce7,stroke:#16a34a,color:#14532d
-    classDef ext fill:#fff7ed,stroke:#ea580c,color:#7c2d12
-    classDef data fill:#fce7f3,stroke:#db2777,color:#831843
-    classDef human fill:#fee2e2,stroke:#dc2626,color:#7f1d1d
-
-    subgraph L1["Layer 1: Client Layer"]
-        M1["Merchant Portal (React)"]:::client
-        M2["Admin Dashboard (React)"]:::client
+graph TB
+    subgraph "Frontend (React + TypeScript + Vite)"
+        A[Auth Page - Signup / Login] --> B[Dashboard - Upload Documents]
+        B --> C[Admin Panel - Verify and Decide]
     end
 
-    subgraph L2["Layer 2: Frontend Hosting"]
-        V["Vercel Deployment"]:::infra
+    subgraph "Backend (FastAPI + Python)"
+        D[Auth Service - JWT Tokens] --> E[Document Service - Upload + OCR]
+        E --> F[Document Extraction - Groq Vision]
+        F --> G[Field Validator - PAN/GST/IFSC]
+        G --> H[Decision Engine - Deterministic Rules]
+        H --> I[LLM Verifier - Groq]
+        H --> J[External Checker - 5 Verification Sources]
+        H --> K[Risk Scorer - Weighted 0 to 100]
+        H --> L[Fraud Detector - Cross-Merchant Check]
     end
 
-    subgraph L3["Layer 3: API Layer"]
-        API["REST APIs"]:::api
-        AUTH["Authentication and Authorization"]:::api
-        VAL["Request Validation"]:::api
+    subgraph "Database (PostgreSQL)"
+        M[(Merchants)]
+        N[(Documents)]
+        O[(Audit Logs)]
+        P[(5 External Tables - Govt DB, CKYC, Auto Verify, Bank Validation, Compliance)]
     end
 
-    subgraph L4["Layer 4: AI and Processing Layer"]
-        subgraph OCR["OCR Service (Groq Vision)"]
-            OCR1["Extract PAN Details"]:::ai
-            OCR2["Extract GST Details"]:::ai
-            OCR3["Extract Bank Details"]:::ai
-            OCR4["OCR Confidence Scoring"]:::ai
-        end
-        subgraph MATCH["Document Matching Engine (LLM Cross-Verification)"]
-            MATCH1["PAN Name vs GST Name"]:::ai
-            MATCH2["PAN Name vs Bank Holder"]:::ai
-            MATCH3["GST Name vs Bank Holder"]:::ai
-            MATCH4["GST Number Consistency"]:::ai
-            MATCH5["Document Ownership Check"]:::ai
-            MATCH6["OCR Confidence Validation"]:::ai
-        end
-        subgraph DEC["Decision Engine"]
-            DEC1["PAN Validation"]:::ai
-            DEC2["GST Validation"]:::ai
-            DEC3["Bank Account Validation"]:::ai
-            DEC4["Identity Cross-Verification"]:::ai
-            DEC5["Fraud Ring Detection"]:::ai
-            DEC6["Risk Scoring (0 to 100)"]:::ai
-            DEC7["Explainable Risk Analysis"]:::ai
-        end
-    end
-
-    subgraph L5["Layer 5: External Verification (5 simulated sources)"]
-        X1["Government PAN Database"]:::ext
-        X2["CKYC Records"]:::ext
-        X3["Automated Verification"]:::ext
-        X4["Bank Verification Service"]:::ext
-        X5["Compliance Database"]:::ext
-    end
-
-    subgraph L6["Layer 6: Data Layer (PostgreSQL)"]
-        D1["D1 Documents Store"]:::data
-        D2["D2 OCR Results Store"]:::data
-        D3["D3 Merchant Records"]:::data
-        D4["D4 Verification Results"]:::data
-        D5["D5 Fraud Detection Records"]:::data
-        D6["D6 Risk Scores Store"]:::data
-        D7["D7 Audit Trail Logs"]:::data
-    end
-
-    subgraph L7["Layer 7: Human Review and Decision"]
-        Q["Admin Review Queue"]:::human
-        DASH["Risk Assessment Dashboard (score, checks, factors, recommendation)"]:::human
-        DECIDE["Human Decision"]:::human
-    end
-
-    M1 --> V
-    M2 --> V
-    V --> API
-    API --> AUTH
-    API --> VAL
-    VAL --> OCR
-    API --> DEC
-    OCR --> MATCH
-    MATCH --> DEC
-    OCR --> D2
-    DEC --> X1
-    DEC --> X2
-    DEC --> X3
-    DEC --> X4
-    DEC --> X5
-    DEC --> D4
-    DEC --> D5
-    DEC --> D6
-    DEC --> D7
-    Q --> DASH
-    DASH --> DECIDE
+    A --> D
+    B --> E
+    C --> H
+    F --> E
+    E --> M
+    E --> N
+    H --> O
+    J --> P
 ```
 
-### 2. Sequence Diagram (End-to-End Flow)
+### Data Flow, End to End
 
 ```mermaid
 sequenceDiagram
-    autonumber
     participant M as Merchant
-    participant P as Merchant Portal
-    participant B as FastAPI Backend
-    participant G as "OCR Service (Groq Vision)"
-    participant D as Decision Engine
-    participant X as External Sources
-    participant DB as PostgreSQL
-    participant A as Admin Dashboard
-    participant R as Admin Reviewer
+    participant F as Frontend
+    participant B as Backend
+    participant OCR as Groq Vision
+    participant LLM as Groq LLM
+    participant DB as Database
+    participant A as Admin
 
-    rect rgb(219, 234, 254)
-        Note over M,R: Phase 1: Submission
-        M->>P: Upload PAN, GST, Bank Proof
-        P->>B: Send Documents
-        B->>DB: Store Files
-        B->>G: Send Documents for OCR
+    Note over M,A: Phase 1: Document Upload and Extraction
+
+    M->>F: Upload PAN Card
+    F->>B: POST /documents/upload (file + type)
+    B->>B: Validate file type and size
+    B->>DB: Save document (status: checking)
+    B->>OCR: Send document image
+    OCR-->>B: Typed fields (pan_number, name, dob)
+    B->>B: Parse fields and run format check
+    alt OCR found text
+        B->>DB: Store extracted fields
+    else No text found
+        B->>DB: Mark as invalid_format
     end
 
-    rect rgb(220, 252, 231)
-        Note over M,R: Phase 2: OCR and Extraction
-        G-->>B: Extracted Details and Confidence Scores
-        B->>DB: Store OCR Results
-        B-->>P: Return Extracted Data
+    M->>F: Upload GST Certificate
+    Note right of F: Same flow as PAN
+
+    M->>F: Upload Bank Proof
+    Note right of F: Same flow as PAN
+
+    Note over M,A: Phase 2: Admin Verification
+
+    A->>F: Open Admin Panel
+    F->>B: GET /admin/merchants
+    B->>DB: Query all merchants
+    DB-->>B: Merchant list
+    B-->>F: Render merchant table
+
+    A->>F: Click merchant, then Verify
+    F->>B: POST /admin/merchants/:id/verify
+    B->>LLM: Cross-verify fields across documents
+    LLM-->>B: Findings (match or mismatch per field)
+    B->>DB: Check Govt Database (PAN lookup)
+    B->>DB: Check CKYC Records (PAN lookup)
+    B->>DB: Check Automated Verification
+    B->>DB: Check Bank Account Validation
+    B->>DB: Check Compliance Reviews
+    B->>B: Check Fraud Ring (shared PAN or bank)
+    B->>B: Compute Risk Score (0 to 100)
+    B->>DB: Store matched and mismatched checks
+    B-->>F: Verification breakdown
+
+    Note over M,A: Phase 3: Admin Decision
+
+    alt All checks matched
+        A->>F: Click Approve
+        F->>B: POST /admin/merchants/:id/decide (approved)
+        B->>DB: Set status to active
+    else Mismatches found
+        A->>F: Click Reject
+        F->>B: POST /admin/merchants/:id/decide (rejected)
+        B->>B: Humanize rejection reason (LLM)
+        B->>DB: Set status to rejected
     end
 
-    rect rgb(254, 249, 195)
-        Note over M,R: Phase 3: Verification and Analysis
-        B->>D: Trigger Verification
-        rect rgb(220, 252, 231)
-            Note over D: Document Matching (LLM)
-            Note over D: Identity Cross-Verification
-            Note over D: Fraud Detection
-            Note over D: Risk Scoring and Explainable Analysis
-        end
-        D->>D: Run Validations and Matching
-        D->>X: Query 5 External Sources
-        X-->>D: Return Results
-        D->>DB: Store Results, Scores, Logs
-        D-->>B: Return Verification Report
-    end
-
-    rect rgb(254, 226, 226)
-        Note over M,R: Phase 4: Human Review and Decision
-        B-->>A: Verification Report
-        A-->>R: View Report and Risk Breakdown
-        R->>A: Approve or Reject
-        A->>B: Send Decision
-        B->>DB: Update Merchant Status
-        B-->>P: Notify Merchant
-        P-->>M: Show Final Status
-    end
+    M->>F: Refresh Dashboard
+    F->>B: GET /documents/merchant-status
+    B-->>F: Final status (active or rejected)
+    F-->>M: Show result with reason
 ```
-
-### 3. Data Flow Diagram (Level-1 DFD)
-
-```mermaid
-flowchart LR
-    classDef ext fill:#fff7ed,stroke:#ea580c,color:#7c2d12
-    classDef proc fill:#dcfce7,stroke:#16a34a,color:#14532d
-    classDef store fill:#fce7f3,stroke:#db2777,color:#831843
-
-    subgraph EXT["External Entities"]
-        direction TB
-        E1["E1 Merchant"]:::ext
-        E2["E2 Admin Reviewer"]:::ext
-        E3["E3 Government PAN Database"]:::ext
-        E4["E4 CKYC Records"]:::ext
-        E5["E5 Bank Verification Service"]:::ext
-        E6["E6 Automated Verification"]:::ext
-        E7["E7 Compliance Database"]:::ext
-    end
-
-    subgraph PRC["Processes"]
-        direction TB
-        P1(("P1 Document Submission")):::proc
-        P2(("P2 OCR and Data Extraction")):::proc
-        P3(("P3 Document Matching Engine")):::proc
-        P4(("P4 Verification Engine")):::proc
-        P5(("P5 Fraud Detection Engine")):::proc
-        P6(("P6 Risk Scoring Engine")):::proc
-        P7(("P7 Human Review and Decision")):::proc
-    end
-
-    subgraph STO["Data Stores"]
-        direction TB
-        D1["D1 Documents Store"]:::store
-        D2["D2 OCR Results Store"]:::store
-        D3["D3 Merchant Records"]:::store
-        D4["D4 Verification Results Store"]:::store
-        D5["D5 Fraud Detection Store"]:::store
-        D6["D6 Risk Scores Store"]:::store
-        D7["D7 Audit Trail Logs"]:::store
-    end
-
-    E1 -->|"Submit documents"| P1
-    P1 -->|"Store files"| D1
-    P1 -->|"Send documents"| P2
-    P2 -->|"Store extracted fields"| D2
-    P2 -->|"Send fields"| P3
-    P3 -->|"Update records"| D3
-    P3 -->|"Verified fields"| P4
-    E3 -.->|"Query / Response"| P4
-    E4 -.->|"Query / Response"| P4
-    E5 -.->|"Query / Response"| P4
-    E6 -.->|"Query / Response"| P4
-    E7 -.->|"Query / Response"| P4
-    P4 -->|"Store results"| D4
-    P4 -->|"Send checks"| P5
-    P5 -->|"Store fraud records"| D5
-    P5 -->|"Send fraud flags"| P6
-    P6 -->|"Store risk scores"| D6
-    P6 -->|"Send assessment"| P7
-    E2 -->|"Review and decide"| P7
-    P7 -->|"Store audit entry"| D7
-    P7 -.->|"Notify outcome"| E1
-```
-
-### Legend
-
-- **Solid arrows** are data flow.
-- **Dashed arrows** are queries, responses, or notifications.
-- **Blue**: user interfaces and clients. **Light blue**: system and infrastructure. **Light green**: API layer. **Green**: AI and processing. **Orange**: external services and sources. **Pink**: data stores. **Red**: human decision points.
-
-**Mapping to the codebase (accurate):** the OCR Service is `ocr.py` (Groq vision); the Document Matching Engine is `verify.py` (LLM cross-verification); the Decision Engine is `decision.py`. The 5 external sources are the simulated tables `govt_database`, `ckyc_records`, `automated_verification`, `bank_account_validation`, and `compliance_reviews`. The logical data stores map to the real `merchants`, `documents`, and `audit_logs` tables. Verification results, risk scores, and fraud records are stored as JSON on the merchant record.
 
 ---
 
