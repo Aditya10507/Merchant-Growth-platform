@@ -36,7 +36,7 @@ Full design context:
 | File | Responsibility |
 |---|---|
 | `config.py` | All settings/constants/thresholds (risk weights, limits, URLs). Never hardcode a value elsewhere — add it here. |
-| `db.py` | SQLAlchemy engine, session, ORM models (app + 5 simulated external tables), `init_db`/`apply_migrations` startup safety nets (is_test column backfill + Alembic stamp/upgrade). |
+| `db.py` | SQLAlchemy engine, session, ORM models (app + 5 simulated external tables), `init_db`/`apply_migrations` startup safety nets (idempotent `is_test` column ensure + Alembic stamp/upgrade — no auto-archiving of accounts at boot). |
 | `schemas.py` | Pydantic request/response contracts — separate from ORM models on purpose (SRP). |
 | `auth.py` | Password hashing (bcrypt via passlib), JWT issue/verify, signup/login, `get_current_merchant` and `require_role` dependencies. |
 | `ocr.py` | **Groq vision (qwen)** document-extraction wrapper — typed JSON fields per doc type, retries + backoff + multi-key rotation, PDF rasterization (pypdfium2), blank-image guard. Exposes `extract_structured_fields()`; callers never touch the provider. |
@@ -50,7 +50,7 @@ Full design context:
 | `injection_guard.py` | Scans merchant-supplied document text for prompt-injection payloads before it reaches the LLM; redacts flagged values. |
 | `main.py` | FastAPI app wiring only (CORS, routers, request-metrics middleware, startup lifespan, test-dataset zip). |
 | `seed.py` | Seeds the 5 simulated tables, reviewer/admin demo accounts, and **25 ground-truth labeled merchants** (`expected_outcome` audit entries). |
-| `test_features.py` | **Offline E2E suite (54 checks)** via TestClient + throwaway SQLite — covers chaos faults, deferral, calibration, injection defense, concurrency, health. Run `python test_features.py` from `backend/`. |
+| `test_features.py` | **Offline E2E suite (59 checks)** via TestClient + throwaway SQLite — covers chaos faults, deferral, calibration, injection defense, concurrency, health, maintenance-archive safety. Run `python test_features.py` from `backend/`. |
 
 **Known constraints:** `passlib==1.7.4` requires `bcrypt==4.0.1` pinned exactly (newer bcrypt breaks passlib). Groq's free tier is ~200K tokens/day **shared by OCR + LLM**; `LLM_FALLBACK_KEYS` from *other* Groq accounts rotate on 401/403/429 (same-account keys add nothing). Extraction requires a vision-capable model (`qwen/qwen3.8-27b` default; gpt-oss models are text-only on Groq).
 
@@ -65,7 +65,7 @@ Full design context:
 | `components/` | Memoized, accessible pieces: `Button`, `InputField`, `Alert`, `StatusBadge`, `DocumentSlot`, `Layout` (sidebar shell), `RiskBadge`, `RiskBreakdown`, `VerificationTimeline`. |
 | `pages/AuthPage.tsx` | Signup/login toggle with demo quick-fill accounts. |
 | `pages/DashboardPage.tsx` | Merchant dashboard: 3 document slots, status polling (4s), rejection/restart and activated states. |
-| `pages/AdminPage.tsx` | Admin/reviewer panel: status tabs + merchant table (risk badge, sort), detail panel with verify/decide actions + structured checks + audit trail, and admin-only cards: chaos panel, risk calibration, system health (15s auto-refresh), archive-test-merchants. |
+| `pages/AdminPage.tsx` | Admin/reviewer panel: fixed-viewport dashboard (page never scrolls — queue table + detail pane scroll internally) with status tabs + merchant table (risk badge), detail panel with verify/decide actions + structured checks + audit trail, and admin-only cards: chaos panel, risk calibration, archive-test-merchants. |
 | `App.tsx` | Role-based routing: reviewer/admin → AdminPage, merchant → DashboardPage, no session → AuthPage. |
 
 **Client-side document-type validation is deliberately limited.** The frontend only checks file type/size before upload; real "is this actually a PAN?" validation requires OCR server-side. Don't fake it in the browser.

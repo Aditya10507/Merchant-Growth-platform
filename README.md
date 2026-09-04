@@ -58,9 +58,9 @@ A merchant signs up, uploads PAN / GST / bank-proof documents, and the system **
 ### 🛡️ Prompt-Injection Defense
 - **Hostile documents can't corrupt the AI check** — extracted document text is scanned for instruction-override payloads *before* it reaches the LLM; suspected payloads are redacted, audit-logged, and force a `prompt_injection_suspected` mismatch so the merchant routes to human review
 
-### 🖥️ Live System-Health View
-- **Reliability you can see** — admin-only dashboard card shows rolling OCR extraction success rate + latency (avg/p95), LLM cross-verification success rate + latency, and HTTP request stats (total, 5xx errors) over the last hour, auto-refreshing every 15s
-- **Cross-linked to the chaos panel** — any active demo fault shows right in the health view, so a degradation in the numbers is immediately explainable by the fault that caused it
+### 🖥️ Live System-Health Metrics
+- **Reliability you can inspect** — the admin-only `GET /admin/system-health` endpoint reports rolling OCR extraction success rate + latency (avg/p95), LLM cross-verification success rate + latency, and HTTP request stats (total, 5xx errors) over the last hour
+- **Cross-linked to the chaos panel** — any active demo fault shows in the health response, so a degradation in the numbers is immediately explainable by the fault that caused it
 - **Zero infrastructure** — metrics are process-local (health.py), recorded fire-and-forget by the OCR/LLM layers + a request middleware; a metrics bug can never break a real upload
 
 ### 🔐 Concurrency-Safe Admin Decisions
@@ -342,13 +342,13 @@ docker-compose up --build
 3. ✅ The payload never reaches the LLM (content withheld); a
    `prompt_injection_suspected` mismatch forces the merchant to human review
 
-### Use Case 9: Live System-Health View (Build Quality + Explain)
-1. Login as **Admin** → see the "System health" card next to the chaos panel
+### Use Case 9: Live System-Health Metrics (Build Quality + Explain)
+1. Login as **Admin** and call `GET /admin/system-health` (e.g. via `/docs`)
 2. ✅ OCR extraction success rate + avg/p95 latency, LLM success rate + latency,
-   and HTTP request error counts over the last hour — auto-refreshing
-3. Toggle **"OCR engine down"** in the chaos panel → the health card's fault badge
-   lights up, and any upload during the outage counts as a failed extraction
-4. ✅ Degradations are visible in the numbers AND explainable by the fault badge
+   and HTTP request error counts over the last hour
+3. Toggle **"OCR engine down"** in the chaos panel → the active fault appears in
+   the health response, and any upload during the outage counts as a failed extraction
+4. ✅ Degradations are visible in the numbers AND explainable by the fault field
 
 ### Use Case 10: Concurrency-Safe Decisions (Build Quality)
 1. Login as **Admin** (two browser sessions), open the same `verified_matching` merchant in both
@@ -391,7 +391,7 @@ merchant-growth-platform/
 │   ├── Dockerfile             # Container build
 │   └── package.json           # Node dependencies
 ├── test_documents/             # 50 synthetic test merchants (PAN/GST/Bank PNGs)
-├── docs/                       # PRD, Architecture, UI/UX, Dev Plan
+├── docs/                       # PRD, Architecture, UI/UX
 ├── docs/adr/                   # Architecture Decision Records (8 decisions)
 ├── docker-compose.yml          # One-command local deployment
 ├── render.yaml                 # Render Blueprint

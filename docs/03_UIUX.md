@@ -50,7 +50,6 @@
 ### 5.3 Admin-only engineering cards (grid above the queue — reviewers never see them)
 - **Chaos panel (failure-injection)** — three toggle switches (`ocr_down`, `llm_down`, `sources_down`) with one-line hints; an active-fault banner and "Clear all faults" panic button.
 - **Risk-weight calibration** — "Run calibration" → report: labeled counts, clean vs flagged mean scores, best-F1 cutoff + confusion numbers, collapsible full cutoff sweep table, "Run again".
-- **System health** — auto-refreshing (15s) card: OCR success rate + avg/p95 latency, LLM success rate + latency, HTTP request total + 5xx count, uptime, and an active-faults badge cross-linked to the chaos panel.
 
 ## 6. States
 
@@ -63,8 +62,9 @@
 
 All async flows follow the shared `AsyncState<T>` pattern (idle/loading/success/error) — no ad-hoc boolean flags.
 
-## 7. Responsive Behavior
+## 7. Layout & Responsive Behavior
 
+- The app shell is a **fixed-viewport dashboard** (sidebar + main), not a long scrollable page: the admin header, tabs, and engineering cards are pinned, and the review row below flexes — the merchant queue table and the stationary detail pane each scroll *internally* (`overflow-y-auto` + sticky table header), so clicking "View" never scrolls the detail away.
 - Admin queue + detail panel sit side by side on wide screens (fixed-width detail column); the admin engineering cards stack 2-up on large screens, 1-up below; tables scroll rather than squeeze on narrow viewports.
 - Dashboard slots: 3-up on desktop, wrapping to 1-up on mobile.
 
@@ -73,4 +73,4 @@ All async flows follow the shared `AsyncState<T>` pattern (idle/loading/success/
 - StatusBadge pairs color with text; RiskBadge shows the numeric score + a level label ("Low risk" etc.).
 - Toggle switches are real `role="switch"` buttons with `aria-checked`; tabs use `aria-pressed`.
 - Keyboard-navigable tables/buttons; visible focus states throughout.
-- Components are memoized; the dashboard polls at 4s and the health card at 15s — deliberate balances between liveness and load.
+- Components are memoized; the dashboard polls at 4s — a deliberate balance between liveness and load.

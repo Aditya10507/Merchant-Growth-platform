@@ -2066,4 +2066,26 @@ Uploading documents quickly (within ~2s of each other) made the 2nd/3rd document
 
 ---
 
+### Session 25 — repository cleanup: temp files, leaked artifacts, stale docs
+
+User asked to make the folder as small as possible without losing any feature. Audited every tracked file, then (with explicit user confirmation) deleted:
+
+- **13 one-off frontend E2E/diagnostic scripts** (`e2e_diagnose.cjs`, `e2e_diagnose_user.cjs`, `e2e_final.cjs`, `e2e_full_flow.cjs`, `e2e_live.cjs`, `e2e_live_test.ts`, `e2e_playwright_uc1–4.cjs`, `e2e_quick.cjs`, `e2e_real_docs_test.ts`, `e2e_report.txt`) — superseded by the maintained suites `backend/test_features.py` (offline, 59 checks) and `backend/test_e2e.py` (live).
+- **2 backend diagnostic scripts** (`test_diagnose_live.py`, `test_diagnose_upload.py`) — session-specific debugging tools, superseded by the same suites.
+- **2 stale root test reports** (`REPORT_E2E_LIVE_2026-09-04.md`, `REPORT_E2E_LIVE_OCR_SWAP_2026-09-04.md`) — snapshots superseded by `session_log.md`.
+- **Build cache leaked to GitHub** (`frontend/tsconfig.tsbuildinfo`) — gitignored but tracked; untracked via `git rm`. `npm run build` still regenerates it locally (ignored, stays off GitHub).
+- **4 historical planning docs** (`Feature_3.md`, `PHASE_2_IMPLEMENTATION_PLAN.md`, `PHASE_3_ADMIN_VERIFICATION_WORKFLOW.md`, `docs/04_Development_Plan.md`) — all marked "completed" and superseded by KNOWLEDGE.md + the 8 ADRs + current PRD/Architecture/UIUX docs.
+
+Also: removed the now-unused `playwright` npm dependency (only the deleted frontend scripts imported it; `backend/test_e2e.py` uses the *Python* playwright optionally and skips gracefully when absent). Doc cleanup to match the current architecture:
+- KNOWLEDGE.md: `test_features.py` count 54→59; `db.py` row now says no boot-time auto-archiving; `AdminPage.tsx` row reflects the Session-24 fixed-viewport dashboard (queue + detail scroll internally; no system-health card in the UI).
+- README.md: "Live System-Health" retitled as an admin **endpoint** (card removed from UI in Session 24); Use Case 9 rewritten to hit `GET /admin/system-health` via `/docs`; project-structure tree updated (no Dev Plan).
+- docs/03_UIUX.md: removed the health-card references + 15s poll note; section 7 now describes the fixed-viewport layout.
+- .gitignore: dropped the `summary.csv` line (it is tracked and REQUIRED by the `/test-dataset/download` endpoint — judges download it).
+
+**Kept (verified still needed):** `test_documents/test_documents/summary.csv` (served to judges; referenced in main.py/config.py), all 50 synthetic merchant image sets (Dockerfile copies them into the image; `/test-dataset/download` zips them), the maintainable test suites, and every doc in KNOWLEDGE.md/README/docs/.
+
+**Verification:** backend py_compile all modules + alembic OK · `test_features.py` **59/59** · frontend `tsc -b` + `vite build` clean · `git status` shows exactly the intended deletions + doc edits. Committed and pushed (`dcc915f` parent → Session 25 commit).
+
+---
+
 *New sessions will be appended below.*

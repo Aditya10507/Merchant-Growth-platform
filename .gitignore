@@ -45,7 +45,6 @@ frontend/diag_scenario*.png
 # --- Test documents (synthetic data for E2E tests) ---
 test_documents/test_documents/fake_pan.png
 test_documents/test_documents/invalid_test.txt
-test_documents/test_documents/summary.csv
 
 # --- Docker volumes ---
 db_data/
