@@ -1790,15 +1790,22 @@ Two more failed deploys (05:26:54, 05:35:41 UTC) showed the identical `column me
 | `backend/alembic/versions/8f2c1a9b4d7e` | Migration made idempotent: skips the ADD COLUMN if the column already exists (so it never fails with DuplicateColumn after the safety net ran), always runs the backfill. |
 | `backend/seed.py` | `apply_migrations()` stays but is non-fatal (default); a failed migration prints its traceback to stdout (visible in deploy logs) but no longer blocks startup, since `init_db()` already guaranteed the schema. |
 
-### Verification (round 2)
-- Harshest case (no alembic_version at all, column dropped): `init_db()` alone re-adds the column and backfills correctly. ✅
-- Exact Render pre-migration state (`alembic_version` at `06c7dad78bad`, no column): `python seed.py` → **exit 0**, head advances to `8f2c1a9b4d7e`, ground truth preserved (`is_test=0`), test merchant archived (`is_test=1`). ✅
-- Migration re-run with column already present: no DuplicateColumn. ✅
-- Endpoint regression suite (13 checks): archive works, reviewer 403, idempotent re-run, admin list excludes archived, batch test totals 25 with zero exceptions. ✅
-- `python -m py_compile *.py alembic/versions/*.py`: clean.
+### Fix (round 3) — THE REAL ROOT CAUSE (boolean literal on PostgreSQL)
+The next deploy log finally showed the true error: `psycopg2.errors.DatatypeMismatch: column "is_test" is of type boolean but expression is of type integer` on `UPDATE merchants SET is_test = 1`. PostgreSQL rejects integer literals for BOOLEAN columns (SQLite is lenient, which is why every local test passed). Because PG DDL is transactional, the failed UPDATE rolled back the whole migration — including the ADD COLUMN — which is why every previous log showed "is_test does not exist".
+
+| File | Change |
+|---|---|
+| `backend/db.py` | Backfill binds a real Python boolean (`{"val": True}`) instead of the literal `1`. |
+| `backend/alembic/versions/8f2c1a9b4d7e` | Same fix, executed via `op.get_bind().execute(sa.text(...), {"val": True})` — alembic ≥ 1.13's `op.execute()` no longer accepts bind params. |
+
+### Final verification (LIVE, after deploy)
+- `GET /health`: 200. Maintenance endpoint present in OpenAPI (new code live).
+- Admin merchant list: **25 merchants** (was 121 — the ~96 E2E/test merchants were archived by the startup backfill).
+- `POST /admin/batch-test`: **total 25, correctly_approved 15, correctly_flagged 10, accuracy 100%, false_approvals 0, unresolved_exceptions 0.** ✅
 
 ### Lesson learned (future schema changes)
-**Any new column/table must be safe for `python seed.py` to run standalone**, because that runs before uvicorn on Docker/Render. If a new column needs the same treatment, extend `_ensure_is_test_column()` (or generalize it) — and keep migrations idempotent.
+1. **Any new column/table must be safe for `python seed.py` to run standalone**, because that runs before uvicorn on Docker/Render. Keep `_ensure_is_test_column()` style safety nets + idempotent migrations.
+2. **Test schema-mutation SQL against PostgreSQL semantics, not just SQLite** — SQLite's leniency (integer→boolean coercion, no transactional DDL rollback visibility) hides real PG failures. Bind typed values (real booleans, real timestamps) rather than relying on literals that only SQLite accepts.
 
 ---
 
