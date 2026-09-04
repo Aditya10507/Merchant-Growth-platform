@@ -2201,4 +2201,20 @@ Also: removed the now-unused `playwright` npm dependency (only the deleted front
 
 ---
 
+## Session 33 — Fix broken CI badge: missing httpx in requirements
+
+**Request:** Why does the README show "CI status: CI" (alt text) instead of the badge, and suggest a better project name.
+
+**Root cause found:** the CI badge URL returned a real SVG, but the badge said "CI - failing" because every CI run since the workflow was added (5 runs) failed. The offline suite imports `fastapi.testclient` (starlette TestClient), which requires `httpx` — but `requirements.txt` never listed it, and the latest `openai` release pulls `httpx2` instead of `httpx`. CI failed at the very first import, 18 seconds into the run. Local runs passed only because a leftover `httpx` existed in the dev environment. Reproduced with a clean venv: same import error, then 83/83 after installing httpx.
+
+**Done:** added `httpx==0.28.1` to `backend/requirements.txt`; renamed the stale CI step label ("76 checks" was outdated). Confirmed clean-venv install now runs the full **83/83** suite. Pushed; CI run on the fix commit is **success**, badge now shows "CI - passing".
+
+**Verification:** fresh venv `pip install -r requirements.txt` -> 83/83; GitHub Actions run `2ca591a` completed success; badge SVG title reads "CI - passing".
+
+---
+
+*New sessions will be appended below.*
+
+---
+
 *New sessions will be appended below.*
