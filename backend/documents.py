@@ -7,18 +7,21 @@ Flow per upload (mirrors the Architecture doc's data-flow section):
   1. Validate file type/size and that the document matches the expected
      slot type (server-side safety net; the frontend also does this
      check before the file is even sent).
-  2. Immediately save document as "verifying" and return the response
-     so the frontend is never blocked.
-  3. Run OCR + format matching in a background task (FastAPI BackgroundTasks)
-     so the upload endpoint returns in <1 second regardless of OCR speed.
+  2. Save the file and create the document record as "verifying".
+  3. Run OCR + format matching, awaited inside the request but OFF the
+     event loop: the heavy extraction runs in a worker thread, serialized
+     by a bounded semaphore (settings.OCR_MAX_CONCURRENT) so concurrent
+     uploads don't trip the vision provider's per-minute budget and the
+     event loop stays free for other requests.
   4. If OCR finds a format mismatch → mark document as "invalid_format".
-  5. If all 3 required documents have passed OCR → run LLM cross-verification
-     + the Decision Engine.
+  5. If all 3 required documents have passed OCR → merchant becomes
+     "submitted" (admin-triggered verification happens later in admin.py).
 
 This architecture ensures:
-  - The frontend never times out waiting for OCR (which can take 10-30s on CPU).
-  - Invalid documents are caught quickly via format matching.
-  - The merchant sees real-time status updates via polling.
+  - Upload responses are fast (one extraction per document, downscaled
+    images → few-second latency) while other endpoints stay responsive.
+  - Back-to-back uploads don't fail: OCR_MAX_CONCURRENT caps in-flight
+    vision calls and ocr.py's own pacing/retries handle the rest.
 """
 
 import json as _json
@@ -30,6 +33,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, status
 from sqlalchemy.orm import Session
+from starlette.concurrency import run_in_threadpool
 
 from auth import get_current_merchant
 from config import settings
@@ -42,12 +46,15 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/documents", tags=["documents"])
 
-# Semaphore to serialize OCR processing — PaddleOCR exhausts GPU/CPU
-# tensor memory when multiple background tasks run concurrently, causing
-# crashes like "Tensor holds no memory". Limiting to 1 OCR task at a
-# time prevents this while still keeping the upload endpoint fast
-# (it returns immediately; only the background OCR is serialized).
-_OCR_SEMAPHORE = threading.Semaphore(1)
+# Bounded semaphore for OCR processing. Each upload runs its extraction
+# in a worker thread (run_in_threadpool) rather than on the event loop;
+# this semaphore caps how many documents extract CONCURRENTLY at
+# settings.OCR_MAX_CONCURRENT. Allowing a little overlap (2 is the
+# default) makes a fast 3-document upload finish sooner, while the cap
+# + ocr.py's global pacing keep the vision provider's per-minute budget
+# from being blown — which used to surface as the user-visible
+# "temporarily unavailable" on the 2nd/3rd quick upload.
+_OCR_SEMAPHORE = threading.BoundedSemaphore(settings.OCR_MAX_CONCURRENT)
 
 # A quick heuristic signature per document type used to catch an obviously
 # wrong document (e.g. Aadhaar uploaded into the PAN slot) before running
@@ -301,18 +308,23 @@ async def upload_document(
     db: Session = Depends(get_db),
 ) -> DocumentStatusResponse:
     """
-    Upload endpoint that returns immediately. The heavy OCR processing
-    runs in a background thread so the frontend never times out.
-    Using threading.Thread instead of FastAPI BackgroundTasks because
-    BackgroundTasks are unreliable on Render free tier (the process can
-    be suspended between requests, killing pending background tasks).
+    Upload endpoint. The heavy OCR work is awaited inside this request but
+    OFF the event loop (run_in_threadpool), serialized by the OCR
+    semaphore — a second upload can start extracting while the first is
+    still running (up to settings.OCR_MAX_CONCURRENT in flight), so a
+    fast multi-document upload stays within a few seconds per document
+    instead of queueing behind a blocked event loop.
 
     Flow:
-      1. Validate inputs (fast, synchronous)
-      2. Save file to disk (fast, synchronous)
-      3. Create document record with status "verifying" (fast, synchronous)
-      4. Return response immediately (< 1 second total)
-      5. Background thread: run OCR → format check → store fields → trigger verification
+      1. Validate inputs (fast)
+      2. Save file to disk + create document record with status "verifying"
+      3. Await OCR in a worker thread → format check → store fields →
+         mark merchant submitted once all 3 documents are valid
+      4. Return the post-OCR document status
+
+    (threading.Thread/BackgroundTasks were rejected earlier because
+    Render free tier can suspend the process between requests — awaited
+    in-request processing is the reliable option there.)
     """
     # Block uploads into a rejected application — merchant must restart first.
     if merchant.onboarding_status == "rejected":
@@ -347,12 +359,13 @@ async def upload_document(
     db.commit()
     db.refresh(document)
 
-    # Run OCR synchronously — background threads (BackgroundTasks and
-    # threading.Thread) are killed on Render free tier when the process
-    # is suspended between requests. Synchronous OCR takes 2-5s per
-    # document but is the only reliable approach on Render free tier.
+    # Run OCR off the event loop, serialized by the semaphore (see
+    # _OCR_SEMAPHORE above). Blocking extraction directly in an async
+    # endpoint would freeze every other request for its whole duration;
+    # a background thread without the semaphore would let concurrent
+    # uploads hammer the vision provider and blow its per-minute budget.
     logger.info("Starting OCR for document %s (merchant %s, type %s)", document.id, merchant.id, doc_type)
-    _run_ocr(document.id, file_path, doc_type, merchant.id)
+    await run_in_threadpool(_process_document_ocr, document.id, file_path, doc_type, merchant.id)
     logger.info("OCR completed for document %s", document.id)
 
     # Refresh from DB to get the updated status after OCR

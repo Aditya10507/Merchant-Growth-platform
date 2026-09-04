@@ -1997,4 +1997,34 @@ User asked to update every document to the current architecture, features, and d
 
 ---
 
+## Session 23 — OCR latency + back-to-back upload reliability tuning (September 4, 2026)
+
+### Problem
+Uploading documents quickly (within ~2s of each other) made the 2nd/3rd document fail with "Document verification is temporarily unavailable" and per-document verification was slow.
+
+### Root causes found (measured)
+1. **Per-call vision tokens are large and fixed at ~2,500** for the 1000px synthetic docs (Groq charges by resolution). 200K tokens/day ≈ **~78 extractions/day per Groq account** — E2E runs + manual tests drain it fast. At test time the account was at **Used 199999/200000** → every call after the first 429s → the unavailable message. This is quota, not code — and it is exactly what a user sees when the daily budget dies mid-session.
+2. No image downscaling: phone photos (3000px+) would cost 5–10× more than the model needs.
+3. Upload endpoint ran blocking OCR directly inside an `async def` — freezing the event loop for every other request for the whole extraction.
+4. Fixed 2s pacing + [2,4,8]s retry backoffs ignored the provider's Retry-After hint and stretched wall-clock time on transient 429s.
+
+### Changes
+| File | Change |
+|---|---|
+| `backend/config.py` | New OCR knobs (all env-overridable): `OCR_MAX_IMAGE_DIMENSION=1024`, `OCR_JPEG_QUALITY=90`, `OCR_PDF_RENDER_SCALE=1.5`, `OCR_MIN_CALL_INTERVAL_SECONDS=1.2`, `OCR_MAX_CONCURRENT=2`, `OCR_MAX_ATTEMPTS=3`, `OCR_RETRY_BACKOFF_SECONDS=1,2,4`, `OCR_API_TIMEOUT_SECONDS=45` |
+| `backend/ocr.py` | Images **downscaled to ≤1024px long edge + JPEG-encoded before every vision call** (5× pixel/token cut for phone photos; already-small images pass through untouched); PDF rasterized at scale 1.5 then same pipeline; bounded in-process concurrency guard (`OCR_MAX_CONCURRENT`); pacing/backoff settings-driven; **Retry-After header honored** between attempts; extraction `max_tokens` 600→400; per-call 45s fail-fast timeout |
+| `backend/documents.py` | Upload OCR moved **off the event loop** (`run_in_threadpool` + bounded semaphore) — concurrent uploads extract in parallel up to the cap instead of freezing the server, making back-to-back uploads reliable |
+
+### Verification
+- `python test_features.py`: **54/54** (unchanged).
+- Unit: 2400px PNG → 1024×614 JPEG (~5× fewer pixels/bytes) pre-call; small images untouched.
+- Live single-doc measure before quota died: PAN upload+extract **3.03s, extraction exact** (`AGSFS4133P / Anirban Rathore`). Full 3-doc burst timing was **not measurable** — the account's daily quota (200K tokens) hit 199999/200000 mid-test, which is the same failure the user reported.
+
+### Notes / recommendations for the user
+- The **strongest fix for the "temporarily unavailable" wall is adding 1–2 Groq keys from OTHER accounts** to `LLM_FALLBACK_KEYS` in `backend/.env` (code already rotates on 429/401/403 automatically; each account has its own 200K/day + per-minute budget). Same-account keys add nothing.
+- Per-minute budget: ~3 × 2500-token calls ≈ the 8K/min edge — the new 1.2s pacing + cap-2 concurrency + downscale keeps bursts under it when the daily pool is healthy.
+- Re-run the burst timing test once quota resets (or extra keys are added).
+
+---
+
 *New sessions will be appended below.*

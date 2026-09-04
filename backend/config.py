@@ -70,6 +70,34 @@ class Settings:
     )
     UPLOAD_DIR: Path = Path(__file__).parent / "uploaded_documents"
 
+    # --- OCR/vision latency + rate-limit tuning (ocr.py) ---
+    # Groq vision bills tokens by image resolution, so oversized photos
+    # cost several × more than needed and blow the per-minute budget
+    # when several documents are uploaded back-to-back. Images are
+    # downscaled (long edge cap) and re-encoded to JPEG before the call:
+    # fewer tokens per call → faster responses AND more uploads fit the
+    # minute budget without 429s. OCR_MAX_IMAGE_DIMENSION=0 disables.
+    OCR_MAX_IMAGE_DIMENSION: int = int(os.getenv("OCR_MAX_IMAGE_DIMENSION", "1024"))
+    OCR_JPEG_QUALITY: int = int(os.getenv("OCR_JPEG_QUALITY", "90"))
+    # PDF first page is rasterized at this scale before the same pipeline.
+    OCR_PDF_RENDER_SCALE: float = float(os.getenv("OCR_PDF_RENDER_SCALE", "1.5"))
+    # Minimum gap between vision-call START times (global lock). Kept
+    # small because downscaled images use far fewer tokens per call.
+    OCR_MIN_CALL_INTERVAL_SECONDS: float = float(os.getenv("OCR_MIN_CALL_INTERVAL_SECONDS", "1.2"))
+    # How many documents may be extracted CONCURRENTLY. >1 overlaps the
+    # per-call latency so a fast 3-document upload finishes sooner, while
+    # the small interval above still caps how many calls start per minute.
+    OCR_MAX_CONCURRENT: int = int(os.getenv("OCR_MAX_CONCURRENT", "2"))
+    # Retry ladder on transient failures (rate limit, network, 5xx).
+    OCR_MAX_ATTEMPTS: int = int(os.getenv("OCR_MAX_ATTEMPTS", "3"))
+    OCR_RETRY_BACKOFF_SECONDS: list[float] = [
+        float(x) for x in os.getenv("OCR_RETRY_BACKOFF_SECONDS", "1.0,2.0,4.0").split(",") if x.strip()
+    ]
+    # Fail-fast per-call timeout: a hung provider must not stall an upload
+    # for minutes (the whole request waits on extraction). Retries above
+    # still cover genuinely slow responses within this budget.
+    OCR_API_TIMEOUT_SECONDS: float = float(os.getenv("OCR_API_TIMEOUT_SECONDS", "45"))
+
     # --- Test dataset ---
     # Directory containing the synthetic test documents (PAN, GST, Bank
     # proof images + summary.csv) that judges can download from the

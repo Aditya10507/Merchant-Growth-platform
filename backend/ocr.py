@@ -62,7 +62,15 @@ import re
 import threading
 import time
 
-from openai import OpenAI
+from openai import (
+    APIConnectionError,
+    AuthenticationError,
+    BadRequestError,
+    InternalServerError,
+    OpenAI,
+    PermissionDeniedError,
+    RateLimitError,
+)
 
 from config import settings
 
@@ -88,27 +96,56 @@ class OcrTemporarilyUnavailableError(OcrEngineError):
 # Vision-capable models on Groq (per Groq docs, only these accept images).
 _VISION_MODELS = ("qwen/qwen3.6-27b", "qwen/qwen3.8-27b")
 
-# Groq free-tier pacing: ~30 req/min but each image costs ~2048 tokens
-# against a ~8K token/min budget, so back-to-back image calls must be
-# spaced out. Documents are uploaded one at a time by a human, so a
-# 2s minimum interval is plenty; E2E batch runs rely on the 429
-# retry/backoff below when a minute budget is hit.
-_MIN_CALL_INTERVAL_SECONDS = 2.0
-
-_MAX_ATTEMPTS = 3
-_RETRY_BACKOFF_SECONDS = [2.0, 4.0, 8.0]  # delay before attempts 2, 3
+# Groq free-tier pacing: ~30 req/min but each image call costs tokens
+# against a per-minute budget, so back-to-back calls are spaced by
+# settings.OCR_MIN_CALL_INTERVAL_SECONDS. The interval only needs to be
+# small because _downscale_and_encode() shrinks every image BEFORE the
+# call (see config.py), which cuts per-call tokens several-fold — faster
+# responses AND more calls per minute without 429s. A RateLimitError
+# that still slips through is retried with backoff (honoring the API's
+# Retry-After header when present) and rotated across fallback keys.
 
 _RATE_LIMITER_LOCK = threading.Lock()
 _last_call_time: float = 0.0
 
+# Bounded concurrency across OCR calls in one process. The HTTP layer
+# (documents.py) also serializes on its own semaphore, but this guard
+# keeps the vision-provider call volume bounded no matter the caller.
+_OCR_CALL_LOCK = threading.BoundedSemaphore(settings.OCR_MAX_CONCURRENT)
+
+# Seconds the provider asked us to wait before retrying (Retry-After),
+# remembered from the most recent rate-limit error and honored between
+# attempts. None when no hint was given.
+_retry_after_seconds: float | None = None
+
+
+def _remember_retry_after(exc: Exception) -> None:
+    """Stores the API's Retry-After hint (in seconds) when a rate-limit
+    error carries one, so the retry backoff can honor it instead of a
+    guess. Best-effort — any missing/malformed header just resets to
+    None and the configured ladder is used."""
+    global _retry_after_seconds
+    _retry_after_seconds = None
+    try:
+        response = getattr(exc, "response", None)
+        headers = getattr(response, "headers", None) if response is not None else None
+        if headers is not None:
+            value = headers.get("retry-after") or headers.get("Retry-After")
+            if value:
+                _retry_after_seconds = max(0.5, float(value))
+    except Exception:
+        _retry_after_seconds = None
+
 
 def _pace_calls() -> None:
-    """Sleeps if needed so consecutive API calls respect the pacing interval."""
+    """Sleeps if needed so consecutive API-call start times respect the
+    configured minimum interval (a global floor — concurrent calls still
+    cap their own start times against it)."""
     global _last_call_time
     with _RATE_LIMITER_LOCK:
         elapsed = time.time() - _last_call_time
-        if elapsed < _MIN_CALL_INTERVAL_SECONDS:
-            time.sleep(_MIN_CALL_INTERVAL_SECONDS - elapsed)
+        if elapsed < settings.OCR_MIN_CALL_INTERVAL_SECONDS:
+            time.sleep(settings.OCR_MIN_CALL_INTERVAL_SECONDS - elapsed)
         _last_call_time = time.time()
 
 
@@ -138,13 +175,90 @@ _MIME_BY_MAGIC = (
 )
 
 
+def _rasterize_pdf(file_content: bytes) -> tuple[str, bytes]:
+    """Renders the first PDF page to an image (rasterized at
+    settings.OCR_PDF_RENDER_SCALE) and returns it as PNG bytes. Groq
+    vision accepts images only, not PDF bytes — this preserves the
+    project's existing "JPG, PNG, or PDF" upload contract."""
+    try:
+        import pypdfium2 as pdfium
+    except ImportError as exc:
+        raise OcrEngineError(
+            "PDF support requires pypdfium2 (pip install pypdfium2)."
+        ) from exc
+    try:
+        doc = pdfium.PdfDocument(io.BytesIO(file_content))
+        page = doc[0]  # first page only — KYC documents are single-page
+        bitmap = page.render(scale=settings.OCR_PDF_RENDER_SCALE)
+        pil_image = bitmap.to_pil()
+        doc.close()
+    except Exception as exc:
+        raise OcrEngineError(f"Could not read the uploaded PDF: {exc}") from exc
+    buffer = io.BytesIO()
+    pil_image.save(buffer, format="PNG")
+    return "image/png", buffer.getvalue()
+
+
+def _downscale_and_encode(mime: str, image_bytes: bytes) -> tuple[str, bytes]:
+    """Shrinks an image to fit the OCR max dimension and re-encodes it as
+    JPEG before it is sent to the vision model.
+
+    Why: Groq vision bills tokens by image resolution, so a phone photo
+    or high-res scan costs several × more tokens than the model needs to
+    read the text — which both slows each extraction AND exhausts the
+    per-minute/day budget after 2-3 back-to-back uploads (the user-visible
+    "temporarily unavailable" failure). Downscaling to the configured max
+    dimension (OCR_MAX_IMAGE_DIMENSION, 1024px default) and JPEG encoding
+    keeps text crisp (KYC fields are large print) while cutting tokens
+    and payload several-fold for typical phone photos.
+
+    Best-effort by design: any decode/encode problem falls back to the
+    original bytes so a preprocessing bug can never reject a document.
+    """
+    max_dim = getattr(settings, "OCR_MAX_IMAGE_DIMENSION", 1024)
+    quality = getattr(settings, "OCR_JPEG_QUALITY", 90)
+    if not max_dim or max_dim <= 0:
+        return mime, image_bytes
+    try:
+        from PIL import Image, UnidentifiedImageError
+
+        with Image.open(io.BytesIO(image_bytes)) as img:
+            width, height = img.size
+            longest = max(width, height)
+            if longest <= max_dim:
+                # Vision tokens are charged by resolution, not file
+                # encoding — an already-small image (like the 1000px
+                # synthetic docs) passes through untouched to avoid
+                # pointless re-encode CPU/latency.
+                return mime, image_bytes
+            scale = max_dim / longest
+            new_size = (max(1, round(width * scale)), max(1, round(height * scale)))
+            img = img.resize(new_size, Image.LANCZOS)
+            # JPEG has no alpha/palette; flatten transparency onto white
+            # (documents are white-backed — keeps text contrast crisp).
+            if img.mode in ("RGBA", "LA", "P"):
+                rgba = img.convert("RGBA")
+                background = Image.new("RGB", rgba.size, (255, 255, 255))
+                background.paste(rgba, mask=rgba.split()[-1])
+                img = background
+            elif img.mode != "RGB":
+                img = img.convert("RGB")
+            buffer = io.BytesIO()
+            img.save(buffer, format="JPEG", quality=quality, optimize=True)
+            return "image/jpeg", buffer.getvalue()
+    except (UnidentifiedImageError, OSError, ValueError):
+        # Not decodable — keep original bytes; the provider/blank check
+        # will surface it, never a preprocessing crash.
+        return mime, image_bytes
+
+
 def _image_data_url(file_content: bytes) -> str:
     """Returns a base64 data URL for the vision call.
 
-    PNG/JPEG are passed through directly. PDFs are rasterized (first
-    page rendered to PNG via pypdfium2) because Groq vision accepts
-    images only, not PDF bytes — this preserves the project's existing
-    "JPG, PNG, or PDF" upload contract.
+    Images are run through a downscale + JPEG-encode step first (see
+    _downscale_and_encode) so every extraction pays the smallest token
+    cost that still reads the document. PDFs are rasterized (first page
+    via pypdfium2) because Groq vision accepts images only.
     """
     mime = None
     for magic, candidate in _MIME_BY_MAGIC:
@@ -157,26 +271,11 @@ def _image_data_url(file_content: bytes) -> str:
         )
 
     if mime == "application/pdf":
-        try:
-            import pypdfium2 as pdfium
-        except ImportError as exc:
-            raise OcrEngineError(
-                "PDF support requires pypdfium2 (pip install pypdfium2)."
-            ) from exc
-        try:
-            doc = pdfium.PdfDocument(io.BytesIO(file_content))
-            page = doc[0]  # first page only — KYC documents are single-page
-            bitmap = page.render(scale=2.0)
-            pil_image = bitmap.to_pil()
-            doc.close()
-        except Exception as exc:
-            raise OcrEngineError(f"Could not read the uploaded PDF: {exc}") from exc
-        buffer = io.BytesIO()
-        pil_image.save(buffer, format="PNG")
-        image_bytes = buffer.getvalue()
-        mime = "image/png"
+        mime, image_bytes = _rasterize_pdf(file_content)
     else:
         image_bytes = file_content
+
+    mime, image_bytes = _downscale_and_encode(mime, image_bytes)
 
     b64 = base64.b64encode(image_bytes).decode("utf-8")
     return f"data:{mime};base64,{b64}"
@@ -307,7 +406,11 @@ def _call_vision_once(file_path: str, file_content: bytes, doc_type: str, api_ke
     try:
         response = client.chat.completions.create(
             model=settings.LLM_MODEL,
-            max_tokens=600,
+            # Small output budget — extraction JSON is ~50-150 tokens, and
+            # the provider counts reserved output tokens against the daily
+            # quota, so an oversized cap wastes ~200+ tokens per call.
+            max_tokens=400,
+            timeout=settings.OCR_API_TIMEOUT_SECONDS,
             response_format={"type": "json_object"},
             messages=[
                 {"role": "system", "content": _SYSTEM_PROMPT},
@@ -415,12 +518,21 @@ def _extract_structured_fields_impl(file_path: str, doc_type: str) -> tuple[dict
 
     transient_failures: list[str] = []
     all_empty_attempts = 0
+    max_attempts = settings.OCR_MAX_ATTEMPTS
+    backoff_ladder = settings.OCR_RETRY_BACKOFF_SECONDS
 
-    for attempt in range(1, _MAX_ATTEMPTS + 1):
+    for attempt in range(1, max_attempts + 1):
         for key_index, api_key in enumerate(api_keys):
             _pace_calls()
             try:
-                fields = _call_vision_once(file_path, file_content, doc_type, api_key)
+                # Bounded concurrency guard: caps how many vision calls are
+                # in flight at once (a second upload can start while the
+                # first is still extracting, but only up to
+                # OCR_MAX_CONCURRENT total). The lock is released as soon
+                # as the API returns — exceptions pass through to the
+                # retry handlers below unchanged.
+                with _OCR_CALL_LOCK:
+                    fields = _call_vision_once(file_path, file_content, doc_type, api_key)
                 if not any(fields.values()):
                     # The model read the image but found no fields at all.
                     # For a genuinely blank file this is caught earlier;
@@ -431,17 +543,17 @@ def _extract_structured_fields_impl(file_path: str, doc_type: str) -> tuple[dict
                     logger.warning(
                         "Vision extraction returned empty fields for %s (%s) "
                         "attempt %d/%d — retrying (all_empty_attempts=%d)",
-                        file_path, doc_type, attempt, _MAX_ATTEMPTS, all_empty_attempts,
+                        file_path, doc_type, attempt, max_attempts, all_empty_attempts,
                     )
                     transient_failures.append("model returned empty fields")
-                    if all_empty_attempts >= _MAX_ATTEMPTS:
+                    if all_empty_attempts >= max_attempts:
                         # Exhausted retries: report as empty (not an error) so
                         # documents.py shows "no readable text" (invalid_format)
                         # rather than a hard rejection or a false "unavailable".
                         logger.error(
                             "Vision extraction returned empty fields for %s (%s) "
                             "on all %d attempts",
-                            file_path, doc_type, _MAX_ATTEMPTS,
+                            file_path, doc_type, max_attempts,
                         )
                         empty_fields = {key: "" for key in _DOC_TYPE_SCHEMAS[doc_type]}
                         return _finalize(empty_fields, doc_type)
@@ -459,16 +571,12 @@ def _extract_structured_fields_impl(file_path: str, doc_type: str) -> tuple[dict
                     attempt, key_index + 1, len(api_keys), file_path, type(exc).__name__, exc,
                 )
                 transient_failures.append(f"{type(exc).__name__}: {exc}")
+                if isinstance(exc, RateLimitError):
+                    # Remember the provider's Retry-After hint so the
+                    # between-attempt backoff below waits the right amount.
+                    _remember_retry_after(exc)
                 # Try the next key on the same attempt — but if every key
                 # just failed with auth/permission, retrying is pointless.
-                from openai import (
-                    APIConnectionError,
-                    AuthenticationError,
-                    InternalServerError,
-                    PermissionDeniedError,
-                    RateLimitError,
-                )
-
                 if isinstance(exc, (AuthenticationError, PermissionDeniedError)) and key_index == len(api_keys) - 1:
                     # All keys rejected the request on auth/permissions.
                     raise OcrEngineError(
@@ -478,19 +586,24 @@ def _extract_structured_fields_impl(file_path: str, doc_type: str) -> tuple[dict
                     ) from exc
                 continue
 
-        if attempt < _MAX_ATTEMPTS:
-            backoff = _RETRY_BACKOFF_SECONDS[attempt - 1]
+        if attempt < max_attempts:
+            # Prefer the provider's Retry-After hint when present (rate
+            # limits tell you exactly when to retry); fall back to the
+            # configured ladder otherwise.
+            backoff = backoff_ladder[attempt - 1] if attempt - 1 < len(backoff_ladder) else 4.0
+            if _retry_after_seconds is not None:
+                backoff = min(_retry_after_seconds, 10.0)
             logger.warning(
-                "All %d key(s) failed on attempt %d/%d for %s — backing off %.0fs",
-                len(api_keys), attempt, _MAX_ATTEMPTS, file_path, backoff,
+                "All %d key(s) failed on attempt %d/%d for %s — backing off %.1fs",
+                len(api_keys), attempt, max_attempts, file_path, backoff,
             )
-            time.sleep(backoff)
+            time.sleep(max(backoff, 0.5))
 
     # Every key and attempt exhausted on transient errors → service hiccup.
     detail = "; ".join(transient_failures[-3:]) or "unknown"
     raise OcrTemporarilyUnavailableError(
         f"Document extraction service is temporarily unavailable after "
-        f"{_MAX_ATTEMPTS} attempts ({detail}). Please try again in a moment."
+        f"{max_attempts} attempts ({detail}). Please try again in a moment."
     )
 
 
