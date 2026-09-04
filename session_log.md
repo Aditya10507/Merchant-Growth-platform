@@ -2173,4 +2173,18 @@ Also: removed the now-unused `playwright` npm dependency (only the deleted front
 
 ---
 
+## Session 31 — Documentation polish: plain English, no emojis or symbols
+
+**Request:** Polish the README and all project documents. No emojis or fancy symbols anywhere; simple English and short sentences so even a non-technical person can follow; professional tone throughout.
+
+**Done (12 files rewritten, all content preserved):**
+- `README.md` — removed every emoji and icon, dropped the duplicate "Merchant Experience" block, replaced box-drawing tree characters with plain indentation, and reworded headings, feature blurbs, judge walkthroughs, and the status machine into plain language. Kept the live URLs, measured performance table, CI badge, mermaid diagrams (emoji labels removed), API table, test accounts, and schema.
+- `docs/01_PRD.md`, `docs/02_Architecture.md`, `docs/03_UIUX.md`, `docs/PERFORMANCE.md` — plain-English pass; arrows and math-style ranges replaced with words ("0 to 100", "about 200K"); all technical facts and measured numbers unchanged.
+- `KNOWLEDGE.md` and `AGENT_INSTRUCTIONS.md` — simplified phrasing, arrows and dashes removed, all rules and file tables intact.
+- `docs/adr/001-008` — same treatment across all 8 decision records.
+
+**Verification:** automated scan across all 12 documents reports **0** emoji, box-drawing, arrow, or fancy-symbol characters remaining.
+
+---
+
 *New sessions will be appended below.*
