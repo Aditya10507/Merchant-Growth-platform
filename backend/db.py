@@ -215,11 +215,17 @@ def _ensure_is_test_column() -> None:
             logger.info("Added missing merchants.is_test column (startup safety net).")
         # Backfill: merchants without an expected_outcome audit entry are
         # E2E/test-created accounts and can never be scored by batch-test.
-        conn.execute(text(
-            "UPDATE merchants SET is_test = 1 "
-            "WHERE role = 'merchant' AND id NOT IN "
-            "(SELECT merchant_id FROM audit_logs WHERE action = 'expected_outcome')"
-        ))
+        # The value is bound as a real boolean (not the literal 1) because
+        # PostgreSQL rejects `SET boolean_col = 1` with DatatypeMismatch —
+        # SQLite tolerates it, which hid this until the first PG deploy.
+        conn.execute(
+            text(
+                "UPDATE merchants SET is_test = :val "
+                "WHERE role = 'merchant' AND id NOT IN "
+                "(SELECT merchant_id FROM audit_logs WHERE action = 'expected_outcome')"
+            ),
+            {"val": True},
+        )
 
 
 def init_db() -> None:

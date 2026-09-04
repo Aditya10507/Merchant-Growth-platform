@@ -41,10 +41,19 @@ def upgrade() -> None:
 
     # Backfill: merchants without an expected_outcome audit entry are
     # E2E/test-created accounts and can never be scored by batch-test.
-    op.execute(
-        "UPDATE merchants SET is_test = 1 "
-        "WHERE role = 'merchant' AND id NOT IN "
-        "(SELECT merchant_id FROM audit_logs WHERE action = 'expected_outcome')"
+    # is_test is BOOLEAN — bind a real boolean, because PostgreSQL rejects
+    # `SET boolean_col = 1` with DatatypeMismatch (SQLite tolerates it,
+    # which hid this bug until the first live PG deploy). op.execute() in
+    # alembic >= 1.13 no longer accepts bind params, so run it through the
+    # migration connection directly.
+    bind = op.get_bind()
+    bind.execute(
+        sa.text(
+            "UPDATE merchants SET is_test = :val "
+            "WHERE role = 'merchant' AND id NOT IN "
+            "(SELECT merchant_id FROM audit_logs WHERE action = 'expected_outcome')"
+        ),
+        {"val": True},
     )
 
 
