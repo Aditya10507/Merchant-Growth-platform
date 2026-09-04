@@ -1855,4 +1855,58 @@ The user reported OCR.space still gave false/empty results in manual testing and
 
 ---
 
+## Session 21 — Buildathon engineering additions: failure injection, risk calibration, prompt-injection defense (September 4, 2026)
+
+### What happened
+Implemented three demo-visible engineering features the user asked for (from the shortlist of what maps to the track's scored criteria):
+
+**Feature 1 — Failure-injection demo mode ("chaos panel"; Failure Recovery showcased)**
+- `backend/faults.py`: in-memory, process-local fault registry (`ocr_down`, `llm_down`, `sources_down`) with enable/disable/reset + snapshot. Toggles reset on redeploy so a demo can never get stuck.
+- Hooks at the exact outage boundaries: `ocr.py` raises `OcrTemporarilyUnavailableError` when `ocr_down` (uploads show the retry-friendly status), `verify.py` raises `LlmVerificationError` when `llm_down`, `decision.py` raises new `ExternalSourceUnavailableError` when `sources_down`.
+- **Real-semantics hardening**: `admin.py` verify previously caught ANY LLM exception and continued with external checks only — which could silently approve a merchant the LLM alone would have flagged. Now an unavailable LLM or external source DEFERS verification (HTTP 503, merchant stays `submitted`, `verification_deferred` audit entry). No determination is ever made on partial signals.
+- Admin endpoints: `GET /admin/faults`, `PUT /admin/faults/{name}` (admin-only), `POST /admin/faults/reset`. Every toggle is audit-logged on the admin's trail.
+
+**Feature 2 — Empirical risk-weight calibration (AI Judgment, proven with data)**
+- `backend/risk_eval.py`: scores every labeled merchant under the CURRENT `RISK_WEIGHTS` and measures separation: per-class score stats (clean vs flagged), confusion matrix at the best-F1 cutoff, full threshold sweep (every 5 points 0–100). Labeled set = the 25 seeded ground-truth merchants (`expected_outcome` audit entries) plus any pipeline-scored merchant with stored checks. Seeded merchants carry no stored checks, so the deterministic check engine is REPLAYED against the seed-derived PAN/account (constants imported from `seed.py` — single source of truth; checks come from the data, never from the label).
+- `POST /admin/risk-eval` (admin-only) + CLI `python risk_eval.py`. Measured on the synthetic labeled set: clean mean risk 0.00, flagged mean 95.0, F1 = 1.000 at cutoff ≥ 5.
+
+**Feature 3 — Prompt-injection defense for the document pipeline (AI Judgment + Build Quality)**
+- `backend/injection_guard.py`: scans extracted (attacker-controlled) document text for instruction-override / role-change / force-answer / system-prompt-leak payloads before anything reaches the LLM; `sanitize_fields()` redacts flagged values.
+- Wired into `admin.py` verify: payloads are sanitized before the LLM sees them, logged as `prompt_injection_suspected`, and force a `prompt_injection_suspected` mismatch (weight 40 in `config.py`) so the merchant routes to human review and never verifies clean.
+
+**Frontend (admin panel)**
+- Chaos panel: three switch toggles + "Clear all faults" + active-fault banner (admin-only).
+- Risk-calibration card: "Run calibration" → clean/flagged mean scores, best-F1 cutoff, confusion counts, collapsible cutoff sweep table (admin-only).
+- Prompt-injection mismatches render with the same prominence as fraud-ring signals (⚠ Security — suspected prompt injection).
+- `ACTION_LABELS` additions: `verification_deferred`, `prompt_injection_suspected`, `demo_fault_toggled`.
+
+### Code changes
+| File | Change |
+|---|---|
+| `backend/faults.py` | **New** — process-local fault registry. |
+| `backend/injection_guard.py` | **New** — injection pattern scanner + field sanitizer. |
+| `backend/risk_eval.py` | **New** — calibration report (dataclasses, metrics, sweep, CLI). |
+| `backend/decision.py` | Added `ExternalSourceUnavailableError` + `sources_down` hook; moved risk scoring into `compute_risk_score()` (shared single source of truth). |
+| `backend/verify.py` | Added `llm_down` fault hook (raises `LlmVerificationError`). |
+| `backend/ocr.py` | Added `ocr_down` fault hook. |
+| `backend/admin.py` | Verify now DEFERS on LLM/source outage (was: continue external-only); injection scan+redact+audit before LLM; new fault + risk-eval endpoints; risk score delegates to `decision.compute_risk_score`. |
+| `backend/config.py` | `prompt_injection_suspected` risk weight added (40). |
+| `backend/schemas.py` | `FaultStateResponse`, `FaultToggleRequest`, risk-eval report schemas. |
+| `backend/test_features.py` | **New** standalone offline suite — 30 checks across all three features (TestClient on a throwaway DB, LLM stubbed). |
+| `frontend/src/api.ts`, `types.ts`, `constants.ts` | Types + API fns for faults/risk-eval; new action labels. |
+| `frontend/src/pages/AdminPage.tsx` | Chaos panel, calibration card, injection rendering (admin-only). |
+| `README.md` | New feature bullets, API endpoint rows, judge use cases 6–8. |
+
+### Verification
+- `python test_features.py`: **30/30 passed** — admin-only enforcement (403s for merchant/reviewer), toggle/reset/audit, `ocr_down` upload → `temporarily_unavailable`, `llm_down`/`sources_down` verify → 503 defer with merchant staying `submitted` + audit entry, verify succeeds after clear, risk-eval scores all 25 seeded labeled merchants (clean 0 / flagged high / F1 1.0), injection payload redacted before LLM + routed to human review + audit logged.
+- Backend `py_compile` on all modules + alembic versions: clean.
+- Frontend `tsc -b --noEmit` and `vite build`: clean.
+
+### Notes / limitations
+- Faults are process-local (in-memory): on Render's single web process they behave like shared state during a demo; they auto-reset on restart by design.
+- Risk-eval's clean F1 = 1.0 is expected on the SYNTHETIC labeled set (it validates the measurement tooling, not real-world accuracy); pipeline-scored merchants from real verify runs are included whenever present and reported separately.
+- Injection detection is pattern-based (known/obvious payloads) — an honest defense layer, with the human-in-the-loop decision as the real safety net. Documented in the module docstring.
+
+---
+
 *New sessions will be appended below.*

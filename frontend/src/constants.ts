@@ -58,6 +58,9 @@ export const ACTION_LABELS: Record<string, string> = {
   application_restarted: "Application restarted",
   manual_review_resolution: "Reviewer decision",
   expected_outcome: "Expected outcome",
+  verification_deferred: "Verification deferred",
+  prompt_injection_suspected: "Prompt-injection suspected",
+  demo_fault_toggled: "Demo fault toggled",
 };
 
 // --- Risk scoring (Feature 1) ---

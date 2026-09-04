@@ -37,6 +37,42 @@ class Decision(str, Enum):
     REJECTED = "rejected"
 
 
+class ExternalSourceUnavailableError(RuntimeError):
+    """Raised when the simulated external verification sources are
+    unavailable (demo fault: sources_down). Deliberately NOT a
+    "mismatch": an unavailable source proves nothing about the
+    merchant — callers must DEFER verification (see admin.py), never
+    treat it as a failed check.
+    """
+
+
+def compute_risk_score(
+    mismatched_checks: list[dict],
+    weights: dict[str, int] | None = None,
+    max_score: int | None = None,
+) -> int:
+    """Weighted sum of mismatched checks, capped at the max risk score.
+
+    Single source of truth for risk scoring — used by the admin verify
+    flow (admin.py), the empirical calibration report (risk_eval.py),
+    and anything that needs to score a breakdown of checks.
+
+    check_name values starting with 'llm_cross_check' all map to the flat
+    'llm_cross_check' weight — every inconsistent field adds its own points.
+    """
+    from config import settings
+
+    weights = weights if weights is not None else settings.RISK_WEIGHTS
+    max_score = max_score if max_score is not None else settings.MAX_RISK_SCORE
+
+    total = 0
+    for check in mismatched_checks:
+        check_name = check["check_name"]
+        weight_key = "llm_cross_check" if check_name.startswith("llm_cross_check") else check_name
+        total += weights.get(weight_key, 10)
+    return min(total, max_score)
+
+
 @dataclass(frozen=True)
 class DecisionOutcome:
     decision: Decision
@@ -65,6 +101,16 @@ def check_external_sources(
     """
     matched: list[CheckResult] = []
     mismatched: list[CheckResult] = []
+
+    # Demo fault hook (admin chaos panel): simulate an outage of the 5
+    # external verification sources. Raises so admin.py DEFERS the whole
+    # verification — an unavailable source is not evidence of a mismatch.
+    import faults
+    if faults.is_active("sources_down"):
+        raise ExternalSourceUnavailableError(
+            "Simulated outage of the external verification sources "
+            "(demo fault: sources_down). No checks were run."
+        )
 
     # --- 1. Government database ---
     govt = db.query(GovtDatabase).filter(GovtDatabase.pan_number == pan_number).first()

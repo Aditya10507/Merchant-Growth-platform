@@ -39,10 +39,15 @@ from db import AuditLog, Document, Merchant, get_db
 from schemas import (
     AuditLogEntryResponse,
     BatchTestReport,
+    ClassScoreStatsResponse,
+    FaultStateResponse,
+    FaultToggleRequest,
     MaintenanceResult,
     MerchantDetailResponse,
     MerchantSummaryResponse,
     ResolveExceptionRequest,
+    RiskEvalReportResponse,
+    ThresholdRowResponse,
     VerificationBreakdown,
 )
 
@@ -60,17 +65,11 @@ def _normalize_checks(checks: list[dict]) -> list[dict]:
 def _compute_risk_score(mismatched_checks: list[dict]) -> int:
     """Weighted sum of mismatched checks, capped at MAX_RISK_SCORE.
 
-    check_name values starting with 'llm_cross_check' all map to the flat
-    'llm_cross_check' weight — every inconsistent field adds its own points.
+    Delegates to decision.compute_risk_score (the single source of truth
+    for risk scoring — risk_eval.py uses the same function for its
+    empirical calibration report).
     """
-    from config import settings
-
-    total = 0
-    for check in mismatched_checks:
-        check_name = check["check_name"]
-        weight_key = "llm_cross_check" if check_name.startswith("llm_cross_check") else check_name
-        total += settings.RISK_WEIGHTS.get(weight_key, 10)
-    return min(total, settings.MAX_RISK_SCORE)
+    return decision.compute_risk_score(mismatched_checks)
 
 
 def _merchant_to_summary(m: Merchant) -> MerchantSummaryResponse:
@@ -174,6 +173,20 @@ def verify_application(
     Postcondition: onboarding_status becomes \"verified_matching\" (no
     mismatches) or \"verified_mismatched\" (one or more mismatches).
 
+    Failure-recovery semantics (Feature 1): the LLM and the external
+    verification sources are REQUIRED signals. If either is unavailable
+    (real outage, or the admin chaos panel's llm_down/sources_down demo
+    faults), verification is DEFERRED with a 503 — the merchant stays in
+    \"submitted\" and no determination is made on partial signals. See
+    decision.ExternalSourceUnavailableError and verify.LlmVerificationError.
+
+    Security semantics (Feature 3): extracted document text is
+    attacker-controlled, so it is scanned for prompt-injection payloads
+    BEFORE reaching the LLM. Suspected payloads are sanitized out of the
+    LLM input, logged to the audit trail, and force an extra
+    prompt_injection_suspected mismatch so the merchant routes to human
+    review.
+
     This replaces the automatic pipeline that previously ran in
     documents.py's _run_verification_if_ready(). The admin now decides
     when to verify, and sees the complete picture before making a decision.
@@ -197,12 +210,53 @@ def verify_application(
         if d.extracted_fields_json
     }
 
-    # --- Step 2: LLM cross-document consistency check ---
+    # --- Step 2: Prompt-injection defense (Feature 3) ---
+    # The fields below come from OCR/vision extraction of documents the
+    # MERCHANT uploaded — attacker-controlled input. Scan for known
+    # instruction-override payloads BEFORE anything reaches the LLM, and
+    # log a finding in the audit trail when one is suspected.
+    import injection_guard
+
+    injection_findings = injection_guard.scan_fields(fields_by_type)
+    llm_input_fields = (
+        injection_guard.sanitize_fields(fields_by_type, injection_findings)
+        if injection_findings
+        else fields_by_type
+    )
+    if injection_findings:
+        detail = "; ".join(
+            f"{f.document_type}/{f.field_name}: {f.pattern_label}"
+            for f in injection_findings
+        )
+        db.add(AuditLog(
+            merchant_id=merchant.id,
+            action="prompt_injection_suspected",
+            reason=f"Suspected prompt-injection payload in document text; fields sanitized before LLM: {detail}",
+        ))
+
+    # --- Step 3: LLM cross-document consistency check ---
+    # The LLM is a REQUIRED signal, never optional. If it is unavailable
+    # (real outage or the llm_down demo fault), verification is DEFERRED
+    # — the merchant stays in 'submitted' and no determination is made on
+    # partial signals. Continuing with external checks only could
+    # silently approve a merchant whose cross-document inconsistency the
+    # LLM was the only check able to catch.
     try:
-        llm_result = verify.cross_verify_documents(fields_by_type)
+        llm_result = verify.cross_verify_documents(llm_input_fields)
+    except verify.LlmVerificationError as exc:
+        db.add(AuditLog(
+            merchant_id=merchant.id,
+            action="verification_deferred",
+            reason=f"LLM cross-verification unavailable; verification deferred (no determination made): {exc}",
+        ))
+        db.commit()
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Verification deferred: the LLM verification service is unavailable. No checks were run; retry once the service recovers.",
+        )
     except Exception:
-        logger.warning("LLM cross-verification failed, continuing with external checks only", exc_info=True)
-        llm_result = None
+        logger.exception("LLM cross-verification crashed unexpectedly (not an outage)")
+        raise
 
     # Convert LLM findings into CheckResult entries
     llm_matched: list[dict[str, str]] = []
@@ -220,18 +274,33 @@ def verify_application(
             else:
                 llm_mismatched.append(entry)
 
-    # --- Step 3: External verification sources (all 5, no short-circuit) ---
+    # --- Step 4: External verification sources (all 5, no short-circuit) ---
     pan_fields = fields_by_type.get("PAN", {})
     bank_fields = fields_by_type.get("BANK_PROOF", {})
     pan_number = pan_fields.get("pan_number", "")
     account_number = bank_fields.get("account_number", "")
 
-    external_breakdown = decision.check_external_sources(db, pan_number, account_number or None)
+    try:
+        external_breakdown = decision.check_external_sources(db, pan_number, account_number or None)
+    except decision.ExternalSourceUnavailableError as exc:
+        # Same deferral rule as the LLM: an unavailable source proves
+        # nothing about the merchant. Never score a merchant against
+        # silence.
+        db.add(AuditLog(
+            merchant_id=merchant.id,
+            action="verification_deferred",
+            reason=f"External verification sources unavailable; verification deferred (no determination made): {exc}",
+        ))
+        db.commit()
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Verification deferred: the external verification sources are unavailable. No checks were run; retry once the service recovers.",
+        )
 
-    # --- Step 3b: Fraud-ring check (cross-merchant shared identifiers) ---
+    # --- Step 4b: Fraud-ring check (cross-merchant shared identifiers) ---
     fraud_ring_breakdown = decision.check_shared_identifiers(db, merchant_id, pan_number, account_number or None)
 
-    # --- Step 4: Merge all findings into one breakdown ---
+    # --- Step 5: Merge all findings into one breakdown ---
     all_matched = (
         llm_matched
         + [cm.model_dump() for cm in external_breakdown.matched]
@@ -243,13 +312,27 @@ def verify_application(
         + [cm.model_dump() for cm in fraud_ring_breakdown.mismatched]
     )
 
+    # A suspected prompt-injection payload is itself a mismatch: the
+    # merchant must route to human review, never verify clean. The
+    # sanitized fields were already sent to the LLM, so the payload never
+    # influenced the consistency verdict.
+    if injection_findings:
+        all_mismatched.append({
+            "check_name": "prompt_injection_suspected",
+            "document_type": ", ".join(sorted({f.document_type for f in injection_findings})),
+            "matched": False,
+            "detail": "Document text contained a suspected prompt-injection payload; "
+                       "content was withheld from the AI check and this merchant "
+                       "was routed to human review.",
+        })
+
     # Ensure matched field is always a bool (not a string from old data)
     for entry in all_matched:
         entry["matched"] = bool(entry["matched"])
     for entry in all_mismatched:
         entry["matched"] = bool(entry["matched"])
 
-    # --- Step 5: Store on the Merchant row ---
+    # --- Step 6: Store on the Merchant row ---
     merchant.matched_checks = _json.dumps(all_matched)
     merchant.mismatched_checks = _json.dumps(all_mismatched)
     merchant.risk_score = _compute_risk_score(all_mismatched)
@@ -261,7 +344,8 @@ def verify_application(
         merchant.rejection_cause = None
         merchant.onboarding_status = "verified_matching"
 
-    # Log the verification run for the audit trail
+    # Log the verification run for the audit trail (also persists any
+    # prompt_injection_suspected entry added in Step 2)
     db.add(AuditLog(
         merchant_id=merchant.id,
         action="verification_run",
@@ -444,3 +528,147 @@ def run_batch_test(
         accuracy_percent=round(accuracy, 2),
         unresolved_exceptions=exceptions,
     )
+
+
+# ---------------------------------------------------------------------------
+# Feature 1: demo failure-injection (chaos panel)
+# ---------------------------------------------------------------------------
+# Admin-only toggles that simulate real outages at the exact boundaries
+# where they would occur (OCR engine, LLM API, external sources). The
+# app code then exercises its REAL graceful-degradation paths — see
+# faults.py for the full design rationale. Every toggle is written to
+# the admin's audit trail so the demo itself is explainable.
+
+
+def _fault_response(state: dict[str, bool]) -> FaultStateResponse:
+    return FaultStateResponse(
+        ocr_down=state["ocr_down"],
+        llm_down=state["llm_down"],
+        sources_down=state["sources_down"],
+        active=[name for name, on in state.items() if on],
+    )
+
+
+@router.get("/faults", response_model=FaultStateResponse)
+def get_fault_state(
+    _admin: Merchant = Depends(require_role("admin")),
+) -> FaultStateResponse:
+    """Current state of the demo fault toggles (admin chaos panel)."""
+    import faults
+
+    return _fault_response(faults.snapshot())
+
+
+@router.put("/faults/{fault_name}", response_model=FaultStateResponse)
+def set_fault(
+    fault_name: str,
+    payload: FaultToggleRequest,
+    db: Session = Depends(get_db),
+    admin: Merchant = Depends(require_role("admin")),
+) -> FaultStateResponse:
+    """Enable or disable one demo fault (e.g. PUT /admin/faults/llm_down
+    with {"enabled": true}). Writes the toggle to the admin's audit trail
+    so the chaos demo is fully explainable.
+    """
+    import faults
+
+    try:
+        changed = faults.set_fault(fault_name, payload.enabled)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+
+    if changed:
+        db.add(AuditLog(
+            merchant_id=admin.id,
+            action="demo_fault_toggled",
+            reason=f"Demo fault '{fault_name}' {'enabled' if payload.enabled else 'cleared'} "
+                   f"by {admin.email}",
+        ))
+        db.commit()
+    return _fault_response(faults.snapshot())
+
+
+@router.post("/faults/reset", response_model=FaultStateResponse)
+def reset_faults(
+    db: Session = Depends(get_db),
+    admin: Merchant = Depends(require_role("admin")),
+) -> FaultStateResponse:
+    """Clears every demo fault at once — the panic button for the demo.
+    Faults are process-local, so this is instant and cannot get stuck.
+    """
+    import faults
+
+    cleared = faults.reset_all()
+    if cleared:
+        db.add(AuditLog(
+            merchant_id=admin.id,
+            action="demo_fault_toggled",
+            reason=f"All demo faults cleared by {admin.email}: {', '.join(cleared)}",
+        ))
+        db.commit()
+    return _fault_response(faults.snapshot())
+
+
+# ---------------------------------------------------------------------------
+# Feature 2: empirical risk-weight calibration
+# ---------------------------------------------------------------------------
+
+
+def _stats_response(stats) -> ClassScoreStatsResponse:
+    return ClassScoreStatsResponse(
+        count=stats.count,
+        mean_score=stats.mean_score,
+        min_score=stats.min_score,
+        max_score=stats.max_score,
+    )
+
+
+def _report_response(report) -> RiskEvalReportResponse:
+    """Maps risk_eval.RiskEvalReport dataclass -> API response schema."""
+    return RiskEvalReportResponse(
+        total_labeled=report.total_labeled,
+        good_count=report.good_count,
+        bad_count=report.bad_count,
+        replayed_count=report.replayed_count,
+        pipeline_scored_count=report.pipeline_scored_count,
+        good_stats=_stats_response(report.good_stats),
+        bad_stats=_stats_response(report.bad_stats),
+        best_threshold=report.best_threshold,
+        best_f1=report.best_f1,
+        best_confusion=report.best_confusion,
+        threshold_sweep=[
+            ThresholdRowResponse(
+                threshold=row.threshold,
+                precision=row.precision,
+                recall=row.recall,
+                f1=row.f1,
+                accuracy=row.accuracy,
+                true_positives=row.true_positives,
+                false_positives=row.false_positives,
+                false_negatives=row.false_negatives,
+                true_negatives=row.true_negatives,
+            )
+            for row in report.threshold_sweep
+        ],
+        weights_used=report.weights_used,
+    )
+
+
+@router.post("/risk-eval", response_model=RiskEvalReportResponse)
+def run_risk_eval(
+    db: Session = Depends(get_db),
+    _admin: Merchant = Depends(require_role("admin")),
+) -> RiskEvalReportResponse:
+    """
+    Runs the empirical risk-weight calibration report: scores every
+    labeled merchant under the CURRENT weights and measures how well the
+    risk score separates clean from flagged merchants (per-class score
+    stats, best-F1 threshold, full cutoff sweep).
+
+    This is the "how do you know your model is good?" answer: the
+    weights are measured against the labeled set, not just reasoned
+    about. See risk_eval.py for methodology and honest limitations.
+    """
+    import risk_eval
+
+    return _report_response(risk_eval.evaluate(db))

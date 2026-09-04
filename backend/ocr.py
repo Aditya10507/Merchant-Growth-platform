@@ -359,6 +359,16 @@ def extract_structured_fields(file_path: str, doc_type: str) -> tuple[dict[str, 
     if doc_type not in _DOC_TYPE_SCHEMAS:
         raise OcrEngineError(f"Unsupported document type: {doc_type}")
 
+    # Demo fault hook (admin chaos panel): simulate an OCR outage. Raises
+    # the retry-friendly exception so uploads surface exactly the same
+    # "temporarily_unavailable" status a real outage produces — and
+    # recover instantly when the fault is cleared.
+    import faults
+    if faults.is_active("ocr_down"):
+        raise OcrTemporarilyUnavailableError(
+            "Simulated OCR outage (demo fault: ocr_down). Please try again shortly."
+        )
+
     try:
         with open(file_path, "rb") as f:
             file_content = f.read()

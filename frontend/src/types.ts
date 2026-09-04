@@ -106,6 +106,58 @@ export interface MaintenanceResult {
   remaining_count: number;
 }
 
+// ---------------------------------------------------------------------------
+// Feature 1: failure-injection (chaos panel) — mirrors FaultStateResponse
+// ---------------------------------------------------------------------------
+
+/** A named demo outage the admin can toggle on/off. */
+export type FaultName = "ocr_down" | "llm_down" | "sources_down";
+
+export interface FaultState {
+  ocr_down: boolean;
+  llm_down: boolean;
+  sources_down: boolean;
+  active: string[];
+}
+
+// ---------------------------------------------------------------------------
+// Feature 2: empirical risk calibration — mirrors RiskEvalReportResponse
+// ---------------------------------------------------------------------------
+
+export interface ClassScoreStats {
+  count: number;
+  mean_score: number;
+  min_score: number;
+  max_score: number;
+}
+
+export interface ThresholdRow {
+  threshold: number;
+  precision: number;
+  recall: number;
+  f1: number;
+  accuracy: number;
+  true_positives: number;
+  false_positives: number;
+  false_negatives: number;
+  true_negatives: number;
+}
+
+export interface RiskEvalReport {
+  total_labeled: number;
+  good_count: number;
+  bad_count: number;
+  replayed_count: number;
+  pipeline_scored_count: number;
+  good_stats: ClassScoreStats;
+  bad_stats: ClassScoreStats;
+  best_threshold: number;
+  best_f1: number;
+  best_confusion: { [key: string]: number };
+  threshold_sweep: ThresholdRow[];
+  weights_used: { [key: string]: number };
+}
+
 export interface ApiErrorBody {
   detail: string;
 }

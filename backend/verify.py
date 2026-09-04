@@ -80,7 +80,19 @@ def cross_verify_documents(documents_fields: dict[str, dict[str, str]]) -> LlmVe
     """
     documents_fields: e.g. {"PAN": {"name": "...", "pan_number": "..."},
                              "GST": {"name": "...", "gst_number": "..."}}
+
+    Demo fault hook: when the llm_down fault is active (admin chaos
+    panel), this raises LlmVerificationError exactly like a real LLM
+    outage would — admin.py then defers verification instead of making
+    a determination on partial signals.
     """
+    import faults
+    if faults.is_active("llm_down"):
+        raise LlmVerificationError(
+            "Simulated LLM outage (demo fault: llm_down). No determination will "
+            "be made until the service recovers."
+        )
+
     user_content = json.dumps(documents_fields, ensure_ascii=False)
 
     try:

@@ -107,6 +107,10 @@ class Settings:
         "llm_cross_check": 15,
         "fraud_ring_pan": 40,
         "fraud_ring_bank": 40,
+        # A suspected prompt-injection payload in merchant-supplied
+        # document text is a strong fraud signal — the merchant routes to
+        # human review, never verifies clean (see injection_guard.py).
+        "prompt_injection_suspected": 40,
     }
     MAX_RISK_SCORE: int = 100
 

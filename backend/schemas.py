@@ -179,3 +179,61 @@ class MaintenanceResult(BaseModel):
     archived_emails: list[str]
     # Merchants that still participate in the batch-test accuracy report.
     remaining_count: int
+
+
+# ---------------------------------------------------------------------------
+# Failure-injection demo mode (Feature 1: chaos panel)
+# ---------------------------------------------------------------------------
+
+
+class FaultStateResponse(BaseModel):
+    """Snapshot of the demo fault-injection toggles (admin chaos panel)."""
+    ocr_down: bool
+    llm_down: bool
+    sources_down: bool
+    # Which faults are currently active, for logging/UI convenience.
+    active: list[str]
+
+
+class FaultToggleRequest(BaseModel):
+    """Enable or disable one demo fault."""
+    enabled: bool = True
+
+
+# ---------------------------------------------------------------------------
+# Empirical risk calibration (Feature 2: risk_eval.py)
+# ---------------------------------------------------------------------------
+
+
+class ClassScoreStatsResponse(BaseModel):
+    count: int
+    mean_score: float
+    min_score: int
+    max_score: int
+
+
+class ThresholdRowResponse(BaseModel):
+    threshold: int
+    precision: float
+    recall: float
+    f1: float
+    accuracy: float
+    true_positives: int
+    false_positives: int
+    false_negatives: int
+    true_negatives: int
+
+
+class RiskEvalReportResponse(BaseModel):
+    total_labeled: int
+    good_count: int
+    bad_count: int
+    replayed_count: int
+    pipeline_scored_count: int
+    good_stats: ClassScoreStatsResponse
+    bad_stats: ClassScoreStatsResponse
+    best_threshold: int
+    best_f1: float
+    best_confusion: dict[str, int]
+    threshold_sweep: list[ThresholdRowResponse]
+    weights_used: dict[str, int]
