@@ -26,7 +26,7 @@ import logging
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import exists as sa_exists
+from sqlalchemy import exists as sa_exists, update as sa_update
 from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
@@ -42,11 +42,14 @@ from schemas import (
     ClassScoreStatsResponse,
     FaultStateResponse,
     FaultToggleRequest,
+    HealthBucketResponse,
     MaintenanceResult,
+    RequestHealthResponse,
     MerchantDetailResponse,
     MerchantSummaryResponse,
     ResolveExceptionRequest,
     RiskEvalReportResponse,
+    SystemHealthResponse,
     ThresholdRowResponse,
     VerificationBreakdown,
 )
@@ -381,6 +384,15 @@ def decide_application(
     Approving is one click (no note required).
     Rejecting defaults to the stored rejection_cause if no note is supplied;
     if the admin supplies a note, it takes precedence (admin override).
+
+    Concurrency safety (Feature 4): the status transition itself is the
+    serialization point. The merchant row is updated with a CONDITIONAL
+    UPDATE (WHERE status IN ('verified_matching', 'verified_mismatched'))
+    and the request proceeds only if exactly one row was changed. If two
+    reviewers click "Approve"/"Reject" on the same merchant at the same
+    instant, only the first request wins the transition; the second gets
+    a 409 and rolls back — the application is never double-processed and
+    only one manual_review_resolution audit entry is ever written.
     """
     merchant = db.query(Merchant).filter(Merchant.id == merchant_id).first()
     if merchant is None:
@@ -391,19 +403,45 @@ def decide_application(
             detail="Only a verified application (matching or mismatched) can be decided on",
         )
 
+    new_status = "active" if payload.decision == "approved" else "rejected"
     if payload.decision == "approved":
-        merchant.onboarding_status = "active"
-        merchant.rejection_reason = None
+        new_rejection_reason = None
     else:
-        merchant.onboarding_status = "rejected"
         # Use the admin-supplied note if provided; otherwise fall back
         # to the auto-generated rejection_cause stored during verification.
         if payload.note and payload.note.strip():
-            merchant.rejection_reason = verify.humanize_reason(payload.note)
+            new_rejection_reason = verify.humanize_reason(payload.note)
         elif merchant.rejection_cause:
-            merchant.rejection_reason = merchant.rejection_cause
+            new_rejection_reason = merchant.rejection_cause
         else:
-            merchant.rejection_reason = "Your application could not be verified. Please contact support for details."
+            new_rejection_reason = "Your application could not be verified. Please contact support for details."
+
+    # Atomic check-and-update: the WHERE clause is evaluated against the
+    # committed row, so a concurrent decision that already flipped the
+    # status makes this UPDATE match 0 rows. This is the single point
+    # where the race is won or lost — identical behavior on SQLite
+    # (single writer) and PostgreSQL (row lock + recheck).
+    result = db.execute(
+        sa_update(Merchant)
+        .where(
+            Merchant.id == merchant_id,
+            Merchant.onboarding_status.in_(("verified_matching", "verified_mismatched")),
+        )
+        .values(onboarding_status=new_status, rejection_reason=new_rejection_reason)
+    )
+    if result.rowcount != 1:
+        # Lost the race (or the state changed under us) — roll back so
+        # nothing partial is written and surface the conflict clearly.
+        db.rollback()
+        logger.warning(
+            "Decide on merchant %s lost the state-transition race (rowcount=%s) — "
+            "another reviewer likely decided it first.",
+            merchant_id, result.rowcount,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This application was already decided by another reviewer. Refresh the queue to see its current status.",
+        )
 
     # Reflect the admin's final call on each active document too
     active_docs = db.query(Document).filter(
@@ -420,6 +458,9 @@ def decide_application(
     ))
     db.commit()
 
+    # The conditional UPDATE bypassed the ORM identity map, so reload the
+    # committed row before building the response.
+    db.refresh(merchant)
     return _merchant_to_summary(merchant)
 
 
@@ -672,3 +713,37 @@ def run_risk_eval(
     import risk_eval
 
     return _report_response(risk_eval.evaluate(db))
+
+
+# ---------------------------------------------------------------------------
+# Feature 4: live system-health view
+# ---------------------------------------------------------------------------
+
+
+@router.get("/system-health", response_model=SystemHealthResponse)
+def get_system_health(
+    _admin: Merchant = Depends(require_role("admin")),
+) -> SystemHealthResponse:
+    """
+    Rolling system-health view over the last hour: OCR extraction success
+    rate + latency, LLM cross-verification success rate + latency, and
+    overall HTTP request stats (total, 5xx errors) — plus the chaos
+    panel's currently active faults, so a degradation visible in the
+    numbers is immediately explainable by the fault that caused it.
+
+    Metrics are process-local and recorded by ocr.py / verify.py / a
+    request middleware (health.py); zero samples simply means nothing
+    has run on this instance yet. Admin-only.
+    """
+    import faults
+    import health
+
+    snap = health.snapshot()
+    return SystemHealthResponse(
+        uptime_seconds=snap["uptime_seconds"],
+        window_seconds=snap["window_seconds"],
+        ocr=HealthBucketResponse(**snap["ocr"]),
+        llm=HealthBucketResponse(**snap["llm"]),
+        requests=RequestHealthResponse(**snap["requests"]),
+        active_faults=[name for name, on in faults.snapshot().items() if on],
+    )

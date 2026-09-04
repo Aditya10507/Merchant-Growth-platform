@@ -85,6 +85,28 @@ def cross_verify_documents(documents_fields: dict[str, dict[str, str]]) -> LlmVe
     panel), this raises LlmVerificationError exactly like a real LLM
     outage would — admin.py then defers verification instead of making
     a determination on partial signals.
+
+    Metrics: every outcome (success or failure) is recorded to health.py
+    so the admin system-health view can report LLM success rate and
+    latency. Recording never raises — a metrics bug cannot break verify.
+    """
+    import time
+
+    import health
+
+    start = time.monotonic()
+    try:
+        result = _cross_verify_impl(documents_fields)
+    except Exception:
+        health.record_llm(ok=False, latency_ms=(time.monotonic() - start) * 1000)
+        raise
+    health.record_llm(ok=True, latency_ms=(time.monotonic() - start) * 1000)
+    return result
+
+
+def _cross_verify_impl(documents_fields: dict[str, dict[str, str]]) -> LlmVerificationResult:
+    """Internal implementation of cross_verify_documents (see wrapper
+    above for the metrics + docstring; this holds the actual call).
     """
     import faults
     if faults.is_active("llm_down"):

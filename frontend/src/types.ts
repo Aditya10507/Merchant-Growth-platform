@@ -158,6 +158,35 @@ export interface RiskEvalReport {
   weights_used: { [key: string]: number };
 }
 
+// ---------------------------------------------------------------------------
+// Feature 4: live system health — mirrors SystemHealthResponse
+// ---------------------------------------------------------------------------
+
+export interface HealthBucket {
+  count: number;
+  succeeded: number;
+  failed: number;
+  success_rate: number | null;
+  avg_latency_ms: number | null;
+  p95_latency_ms: number | null;
+}
+
+export interface RequestHealth {
+  total: number;
+  errors_5xx: number;
+  error_rate: number | null;
+  avg_latency_ms: number | null;
+}
+
+export interface SystemHealth {
+  uptime_seconds: number;
+  window_seconds: number;
+  ocr: HealthBucket;
+  llm: HealthBucket;
+  requests: RequestHealth;
+  active_faults: string[];
+}
+
 export interface ApiErrorBody {
   detail: string;
 }

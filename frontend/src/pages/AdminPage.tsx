@@ -17,6 +17,7 @@ import {
   setFault,
   resetFaults,
   runRiskEval,
+  getSystemHealth,
   ApiError,
 } from "../api";
 import { useAuth } from "../AuthContext";
@@ -35,10 +36,12 @@ import type {
   DocumentStatus,
   FaultName,
   FaultState,
+  HealthBucket,
   MaintenanceResult,
   MerchantDetail,
   MerchantSummary,
   RiskEvalReport,
+  SystemHealth,
 } from "../types";
 
 const STATUS_TABS = [
@@ -80,6 +83,8 @@ function AdminPageBase() {
   const [faultError, setFaultError] = useState<string | null>(null);
   // Feature 2: empirical risk calibration
   const [riskEvalState, setRiskEvalState] = useState<AsyncState<RiskEvalReport>>({ status: "idle" });
+  // Feature 4: live system-health view
+  const [healthState, setHealthState] = useState<AsyncState<SystemHealth>>({ status: "idle" });
 
   const fetchMerchants = useCallback(async (tab: StatusTab) => {
     setListState({ status: "loading" });
@@ -226,6 +231,26 @@ function AdminPageBase() {
     }
   }, []);
 
+  // --- Feature 4: poll the live system-health view while the panel is open ---
+  const refreshHealth = useCallback(async () => {
+    try {
+      const data = await getSystemHealth();
+      setHealthState({ status: "success", data });
+    } catch (error) {
+      setHealthState({
+        status: "error",
+        message: error instanceof ApiError ? error.message : "Could not load system health.",
+      });
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!isAdmin) return;
+    refreshHealth();
+    const timer = setInterval(refreshHealth, 15000);
+    return () => clearInterval(timer);
+  }, [isAdmin, refreshHealth]);
+
   return (
     <Layout>
       <h1 className="mb-2 text-xl font-semibold text-gray-900">
@@ -256,6 +281,12 @@ function AdminPageBase() {
           <RiskEvalCard
             state={riskEvalState}
             onRun={handleRunRiskEval}
+          />
+
+          {/* Live system health: OCR/LLM success rates, latencies, errors */}
+          <SystemHealthCard
+            state={healthState}
+            onRefresh={refreshHealth}
           />
         </div>
       )}
@@ -847,6 +878,132 @@ function CalibrationReport({ report, onRerun }: { report: RiskEvalReport; onReru
 
       <div>
         <Button variant="secondary" onClick={onRerun}>Run again</Button>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Feature 4: Live system health — OCR/LLM success rates, latencies, errors
+// ---------------------------------------------------------------------------
+
+function formatUptime(totalSeconds: number): string {
+  const s = Math.floor(totalSeconds);
+  const hours = Math.floor(s / 3600);
+  const minutes = Math.floor((s % 3600) / 60);
+  const seconds = s % 60;
+  if (hours > 0) return `${hours}h ${minutes}m`;
+  if (minutes > 0) return `${minutes}m ${seconds}s`;
+  return `${seconds}s`;
+}
+
+function fmtRate(value: number | null): string {
+  return value === null ? "—" : `${value.toFixed(1)}%`;
+}
+
+function fmtMs(value: number | null): string {
+  return value === null ? "—" : `${value.toFixed(0)} ms`;
+}
+
+interface SystemHealthCardProps {
+  state: AsyncState<SystemHealth>;
+  onRefresh: () => void;
+}
+
+function SystemHealthCardBase({ state, onRefresh }: SystemHealthCardProps) {
+  return (
+    <section className="rounded-md border border-gray-200 bg-white p-4">
+      <div className="mb-1 flex items-center justify-between">
+        <h2 className="text-sm font-semibold text-gray-900">System health</h2>
+        <Button variant="secondary" onClick={onRefresh} className="px-2 py-1 text-xs">
+          Refresh
+        </Button>
+      </div>
+      <p className="mb-3 text-xs text-gray-500">
+        Rolling success rates and latencies over the last hour on this
+        instance. Auto-refreshes every 15s.
+      </p>
+
+      {state.status === "loading" && (
+        <p className="text-sm text-gray-500" role="status">Loading health…</p>
+      )}
+      {state.status === "error" && (
+        <>
+          <Alert variant="error">{state.message}</Alert>
+          <div className="mt-2">
+            <Button variant="secondary" onClick={onRefresh}>Retry</Button>
+          </div>
+        </>
+      )}
+      {state.status === "success" && <HealthReport health={state.data} />}
+    </section>
+  );
+}
+
+const SystemHealthCard = memo(SystemHealthCardBase);
+
+function ServiceRow({ label, bucket }: { label: string; bucket: HealthBucket }) {
+  return (
+    <div className="rounded-md border border-gray-200 bg-gray-50 p-2">
+      <div className="flex items-center justify-between">
+        <p className="text-xs font-medium text-gray-900">{label}</p>
+        <span
+          className={`rounded px-1.5 py-0.5 text-xs font-semibold ${
+            bucket.success_rate === null
+              ? "bg-gray-200 text-gray-500"
+              : bucket.success_rate >= 95
+                ? "bg-gray-900 text-white"
+                : bucket.success_rate >= 50
+                  ? "bg-gray-300 text-gray-900"
+                  : "bg-gray-200 text-gray-900"
+          }`}
+        >
+          {bucket.success_rate === null ? "no data" : `${bucket.success_rate.toFixed(1)}% ok`}
+        </span>
+      </div>
+      <p className="mt-1 text-xs text-gray-500">
+        {bucket.count} call{bucket.count === 1 ? "" : "s"} · avg {fmtMs(bucket.avg_latency_ms)} ·
+        p95 {fmtMs(bucket.p95_latency_ms)} · {bucket.failed} failed
+      </p>
+    </div>
+  );
+}
+
+function HealthReport({ health }: { health: SystemHealth }) {
+  return (
+    <div className="flex flex-col gap-2 text-xs">
+      <div className="flex items-center justify-between">
+        <p className="text-gray-500">
+          Uptime <span className="font-semibold text-gray-900">{formatUptime(health.uptime_seconds)}</span> ·
+          window: last {Math.round(health.window_seconds / 60)} min
+        </p>
+        {health.active_faults.length > 0 && (
+          <span className="rounded bg-gray-900 px-1.5 py-0.5 font-semibold text-white">
+            ⚠ faults: {health.active_faults.join(", ")}
+          </span>
+        )}
+      </div>
+
+      <ServiceRow label="Document extraction (OCR/vision)" bucket={health.ocr} />
+      <ServiceRow label="LLM cross-verification" bucket={health.llm} />
+
+      <div className="rounded-md border border-gray-200 bg-gray-50 p-2">
+        <div className="flex items-center justify-between">
+          <p className="text-xs font-medium text-gray-900">HTTP requests</p>
+          <span
+            className={`rounded px-1.5 py-0.5 text-xs font-semibold ${
+              health.requests.error_rate === null || health.requests.errors_5xx === 0
+                ? "bg-gray-200 text-gray-500"
+                : "bg-gray-900 text-white"
+            }`}
+          >
+            {health.requests.errors_5xx} × 5xx
+          </span>
+        </div>
+        <p className="mt-1 text-gray-500">
+          {health.requests.total} request{health.requests.total === 1 ? "" : "s"} ·
+          error rate {fmtRate(health.requests.error_rate)} · avg {fmtMs(health.requests.avg_latency_ms)}
+        </p>
       </div>
     </div>
   );

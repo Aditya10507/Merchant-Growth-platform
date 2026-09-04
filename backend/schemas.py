@@ -237,3 +237,39 @@ class RiskEvalReportResponse(BaseModel):
     best_confusion: dict[str, int]
     threshold_sweep: list[ThresholdRowResponse]
     weights_used: dict[str, int]
+
+
+# ---------------------------------------------------------------------------
+# Live system-health view (Feature 4: health.py)
+# ---------------------------------------------------------------------------
+
+
+class HealthBucketResponse(BaseModel):
+    """Rolling stats for one service stream (OCR extraction or LLM
+    cross-verification) over the sliding window."""
+    count: int
+    succeeded: int
+    failed: int
+    success_rate: Optional[float] = None
+    avg_latency_ms: Optional[float] = None
+    p95_latency_ms: Optional[float] = None
+
+
+class RequestHealthResponse(BaseModel):
+    """Rolling HTTP request stats over the sliding window."""
+    total: int
+    errors_5xx: int
+    error_rate: Optional[float] = None
+    avg_latency_ms: Optional[float] = None
+
+
+class SystemHealthResponse(BaseModel):
+    """The full admin system-health snapshot: service success rates,
+    latencies, error counts over the recent window, plus a cross-link to
+    the chaos panel's active faults."""
+    uptime_seconds: float
+    window_seconds: int
+    ocr: HealthBucketResponse
+    llm: HealthBucketResponse
+    requests: RequestHealthResponse
+    active_faults: list[str]

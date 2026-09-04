@@ -29,6 +29,20 @@ throwaway SQLite database:
       prompt_injection_suspected mismatch so the merchant routes to
       human review and never verifies clean
 
+  Feature 4 (Concurrency-safe admin decision):
+    - the decide endpoint is a single-winner state transition: a second
+      decision on the same merchant returns 409 and writes nothing
+    - a simulated lost-update race (two sessions both read the merchant
+      as verifiable, then decide) is won by exactly ONE of them
+    - exactly one manual_review_resolution audit entry is ever written
+
+  Feature 5 (Live system-health view):
+    - health.py aggregates OCR/LLM success rates + latencies correctly
+      over a sliding window (including p95 and zero-sample state)
+    - /admin/system-health is admin-only (merchant gets 403)
+    - the endpoint returns a well-formed snapshot for admins, with the
+      chaos panel's active faults cross-linked
+
 Run with:
     cd backend
     python test_features.py
@@ -57,10 +71,12 @@ from fastapi.testclient import TestClient  # noqa: E402
 # Import AFTER env is set (config reads env at import time)
 import seed  # noqa: E402
 import verify  # noqa: E402
+from admin import decide_application  # noqa: E402
 from auth import hash_password  # noqa: E402
 from db import AuditLog, Document, Merchant, SessionLocal, init_db  # noqa: E402
+import health  # noqa: E402
 from injection_guard import scan_fields, scan_text, sanitize_fields  # noqa: E402
-from schemas import LlmVerificationResult  # noqa: E402
+from schemas import LlmVerificationResult, ResolveExceptionRequest  # noqa: E402
 import main as main_module  # noqa: E402
 
 PASS = 0
@@ -267,6 +283,138 @@ def main() -> None:
            if a.action == "prompt_injection_suspected"]
     check("prompt_injection_suspected audit entry", len(aud) >= 1)
     db.close()
+
+    print()
+    print("Feature 4 — concurrency-safe admin decision")
+    print("-" * 50)
+    # Second decision on the same merchant must be rejected (409) — the
+    # state transition is a single-winner race.
+    clean_fields2 = {
+        "PAN": {"pan_number": "UJALK5542W", "name": "Baljit Khan", "dob": "1963-12-23"},
+        "GST": {"gst_number": "27UJALK5542W1Z5", "name": "Khan Retail Mart"},
+        "BANK_PROOF": {"account_number": "267390881362", "ifsc": "BARB0071834",
+                       "name": "Baljit Khan"},
+    }
+    mid3 = make_submitted_merchant("Race Case", clean_fields2, "race_case")
+    # Verify it (LLM patched so no real API call fires offline)
+    orig_llm2 = verify.cross_verify_documents
+    verify.cross_verify_documents = lambda fields: LlmVerificationResult(
+        overall_consistent=True, findings=[], summary="All consistent")
+    r = client.post(f"/admin/merchants/{mid3}/verify", headers=RH)
+    verify.cross_verify_documents = orig_llm2
+    check("race-case merchant verified_matching",
+          r.status_code == 200 and r.json()["onboarding_status"] == "verified_matching")
+
+    r = client.post(f"/admin/merchants/{mid3}/decide", headers=AH,
+                    json={"decision": "approved"})
+    check("first decision succeeds", r.status_code == 200 and r.json()["onboarding_status"] == "active")
+    r = client.post(f"/admin/merchants/{mid3}/decide", headers=AH,
+                    json={"decision": "rejected"})
+    check("second decision on same merchant -> 409", r.status_code == 409)
+    db = SessionLocal()
+    m3 = db.query(Merchant).filter(Merchant.id == mid3).first()
+    check("first decision's status sticks (no double-processing)",
+          m3.onboarding_status == "active")
+    res_entries = [a for a in db.query(AuditLog).filter(AuditLog.merchant_id == mid3).all()
+                   if a.action == "manual_review_resolution"]
+    check("exactly one manual_review_resolution audit entry", len(res_entries) == 1,
+          f"got {len(res_entries)}")
+    db.close()
+
+    # Simulated lost-update race: two sessions both read the merchant as
+    # verifiable, then both decide — only ONE transition may win.
+    mid4 = make_submitted_merchant("True Race", clean_fields2, "true_race")
+    verify.cross_verify_documents = lambda fields: LlmVerificationResult(
+        overall_consistent=True, findings=[], summary="All consistent")
+    r = client.post(f"/admin/merchants/{mid4}/verify", headers=RH)
+    verify.cross_verify_documents = orig_llm2
+    check("true-race merchant verified_matching",
+          r.status_code == 200 and r.json()["onboarding_status"] == "verified_matching")
+
+    s1 = SessionLocal()
+    s2 = SessionLocal()
+    admin_row = s1.query(Merchant).filter(Merchant.email == "admin@example.com").first()
+    # Both sessions read the merchant first (as two open admin panels would)
+    m_a = s1.query(Merchant).filter(Merchant.id == mid4).first()
+    m_b = s2.query(Merchant).filter(Merchant.id == mid4).first()
+    check("both sessions observe the same verifiable state",
+          m_a.onboarding_status == m_b.onboarding_status == "verified_matching")
+
+    first_decision = None
+    second_lost = False
+    try:
+        decide_application(mid4, ResolveExceptionRequest(decision="approved"),
+                           db=s1, reviewer=admin_row)
+        first_decision = "approved"
+    except Exception:
+        first_decision = None
+    try:
+        decide_application(mid4, ResolveExceptionRequest(decision="rejected"),
+                           db=s2, reviewer=admin_row)
+    except Exception as exc:
+        # The loser must get a 409-style conflict, not a silent success
+        second_lost = getattr(exc, "status_code", None) == 409
+    s1.close()
+    s2.close()
+
+    db = SessionLocal()
+    m4 = db.query(Merchant).filter(Merchant.id == mid4).first()
+    check("exactly one of the two racing decisions won",
+          first_decision is not None and m4.onboarding_status == "active")
+    check("losing decision got a 409 conflict (not silent overwrite)", second_lost)
+    res_entries = [a for a in db.query(AuditLog).filter(AuditLog.merchant_id == mid4).all()
+                   if a.action == "manual_review_resolution"]
+    check("race produced exactly one audit entry", len(res_entries) == 1,
+          f"got {len(res_entries)}")
+    doc_state = [d.verification_status for d in db.query(Document)
+                 .filter(Document.merchant_id == mid4, Document.is_active == True).all()]
+    check("documents reflect the winning decision exactly once",
+          doc_state == ["approved"] * 3, f"got {doc_state}")
+    db.close()
+
+    print()
+    print("Feature 5 — live system-health view")
+    print("-" * 50)
+    health.reset()
+    health.record_ocr(ok=True, latency_ms=120.0)
+    health.record_ocr(ok=True, latency_ms=80.0)
+    health.record_ocr(ok=False, latency_ms=2000.0)
+    health.record_llm(ok=True, latency_ms=400.0)
+    health.record_llm(ok=False, latency_ms=0.0)
+    health.record_request(200, 50.0)
+    health.record_request(503, 900.0)
+    snap = health.snapshot()
+    check("OCR: 2/3 succeeded (66.7%)", snap["ocr"]["success_rate"] == 66.7,
+          f"got {snap['ocr']['success_rate']}")
+    check("OCR: avg latency correct", snap["ocr"]["avg_latency_ms"] == 733.3,
+          f"got {snap['ocr']['avg_latency_ms']}")
+    check("OCR: p95 present", snap["ocr"]["p95_latency_ms"] == 2000.0,
+          f"got {snap['ocr']['p95_latency_ms']}")
+    check("LLM: 1/2 succeeded", snap["llm"]["success_rate"] == 50.0)
+    check("requests: 1 5xx error counted", snap["requests"]["errors_5xx"] == 1)
+    check("requests: error rate 50%", snap["requests"]["error_rate"] == 50.0)
+    health.reset()
+    empty = health.snapshot()
+    check("zero samples -> count 0, null rates (no div-by-zero)",
+          empty["ocr"]["count"] == 0 and empty["ocr"]["success_rate"] is None
+          and empty["requests"]["total"] == 0 and empty["requests"]["error_rate"] is None)
+
+    r = client.get("/admin/system-health", headers=MH)
+    check("merchant denied system-health (403)", r.status_code == 403)
+    r = client.get("/admin/system-health", headers=AH)
+    body = r.json()
+    check("admin system-health returns 200", r.status_code == 200)
+    check("snapshot has all three streams",
+          all(k in body for k in ("ocr", "llm", "requests"))
+          and all(k in body["ocr"] for k in ("count", "success_rate", "avg_latency_ms", "p95_latency_ms")))
+    check("active_faults cross-links chaos panel", "active_faults" in body)
+
+    client.put("/admin/faults/ocr_down", json={"enabled": True}, headers=AH)
+    r = client.get("/admin/system-health", headers=AH)
+    client.post("/admin/faults/reset", headers=AH)
+    check("active fault reflected in health view", "ocr_down" in r.json()["active_faults"])
+    check("request middleware recorded the HTTP calls",
+          r.json()["requests"]["total"] >= 1)
 
     print()
     print("=" * 50)

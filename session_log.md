@@ -1938,4 +1938,38 @@ User reported that logging into their account (adityaws10507@gmail.com, merchant
 
 ---
 
+## Session 22 — Engineering showcase: ADRs, concurrency-safe decisions, live system-health view (September 4, 2026)
+
+### What was built (three judge-facing artifacts, per the "shortlist me" request)
+
+1. **Architecture Decision Records** (`docs/adr/`, 8 files) — short, standard-format ADRs capturing the decisions that make this project defensible in review: the LLM never decides (ADR-001), sync OCR over a queue on Render's free tier (ADR-002), SQLite→Postgres one-codebase with the real bugs that surfaced (ADR-003), append-only audit + soft archive (ADR-004), defer-never-determine on partial signals (ADR-005), vision-OCR swap from OCR.space (ADR-006), in-memory process-local demo state (ADR-007), atomic state transitions (ADR-008).
+
+2. **Concurrency safety on the admin decision endpoint** (`backend/admin.py`) — `decide_application` now performs the status transition with a conditional `UPDATE ... WHERE status IN ('verified_matching','verified_mismatched')` and proceeds only if rowcount == 1; a losing concurrent decision gets a 409 ("already decided by another reviewer") and rolls back. Previously two simultaneous clicks could both succeed and silently overwrite each other. Works identically on SQLite (single writer) and Postgres (row lock + recheck) — see ADR-008.
+
+3. **Live system-health view** (`backend/health.py` + `GET /admin/system-health` + admin-panel card) — process-local rolling metrics (last hour, capped sample count): OCR extraction success rate + avg/p95 latency, LLM cross-verification success rate + latency, HTTP request totals + 5xx error counts. Recorded fire-and-forget at the real boundaries (ocr.py wrapper, verify.py wrapper, request middleware in main.py) so a metrics bug can never break an upload. The card auto-refreshes every 15s and cross-links the chaos panel's active faults.
+
+### Files changed
+| File | Change |
+|---|---|
+| `backend/health.py` | NEW — thread-safe sliding-window metrics store (record_ocr/record_llm/record_request, snapshot, p95) |
+| `backend/ocr.py` | `extract_structured_fields` wrapped — every extraction outcome recorded to health.py |
+| `backend/verify.py` | `cross_verify_documents` wrapped — every LLM outcome recorded to health.py |
+| `backend/main.py` | HTTP middleware recording status + latency per request |
+| `backend/admin.py` | `decide_application` → atomic conditional-UPDATE transition + 409 on lost race; NEW `GET /admin/system-health` |
+| `backend/schemas.py` | HealthBucketResponse / RequestHealthResponse / SystemHealthResponse |
+| `frontend/src/types.ts`, `api.ts` | SystemHealth types + `getSystemHealth()` |
+| `frontend/src/pages/AdminPage.tsx` | SystemHealthCard (15s auto-refresh, fault badge, OCR/LLM/request rows) |
+| `docs/adr/001..008` | NEW — 8 Architecture Decision Records |
+| `backend/test_features.py` | +24 tests: Feature 4 (concurrency) and Feature 5 (health) |
+| `README.md` | 2 feature sections, endpoint row, use cases 9–10, project tree + docs/adr |
+
+### Verification
+- `python test_features.py` — **54/54 passed** (was 30): the race simulation (two DB sessions both read verifiable, both decide → exactly one wins, loser 409s, exactly one audit entry, documents flipped once) and the health aggregates (66.7% OCR success, avg/p95 latency, 5xx counts, zero-sample no-div-by-zero, admin-only 403, fault cross-link) all pass.
+- Frontend `tsc -b` + `vite build` clean.
+
+### Notes
+- Committed + pushed so the live deploy carries the new endpoint and the decide hardening. The health metrics reset on restart by design (ADR-007) — they describe the live instance, not history.
+
+---
+
 *New sessions will be appended below.*

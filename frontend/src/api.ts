@@ -20,6 +20,7 @@ import type {
   MerchantStatus,
   MerchantSummary,
   RiskEvalReport,
+  SystemHealth,
 } from "./types";
 
 export class ApiError extends Error {
@@ -182,4 +183,13 @@ export function resetFaults(): Promise<FaultState> {
 /** Runs the calibration report measuring the current weights on labeled data. */
 export function runRiskEval(): Promise<RiskEvalReport> {
   return request<RiskEvalReport>("/admin/risk-eval", { method: "POST" });
+}
+
+// ---------------------------------------------------------------------------
+// Feature 4: live system health (admin-only)
+// ---------------------------------------------------------------------------
+
+/** Rolling system-health snapshot (OCR/LLM success rates, latencies, request errors). */
+export function getSystemHealth(): Promise<SystemHealth> {
+  return request<SystemHealth>("/admin/system-health");
 }

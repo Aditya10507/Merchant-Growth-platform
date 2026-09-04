@@ -61,6 +61,23 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+@app.middleware("http")
+async def _record_request_metrics(request, call_next):
+    """Feeds the admin system-health view: records every request's status
+    + latency into the process-local metrics store (health.py). Failures
+    to record never affect the request itself.
+    """
+    import time
+
+    import health
+
+    start = time.monotonic()
+    response = await call_next(request)
+    health.record_request(response.status_code, (time.monotonic() - start) * 1000)
+    return response
+
+
 app.include_router(auth.router)
 app.include_router(documents.router)
 app.include_router(admin.router)

@@ -355,6 +355,26 @@ def extract_structured_fields(file_path: str, doc_type: str) -> tuple[dict[str, 
     Raises OcrTemporarilyUnavailableError if every key/attempt failed on
     transient errors (rate limit, network, 5xx), and OcrEngineError for
     configuration/usage errors retrying cannot fix.
+
+    Metrics: every outcome (success or failure) is recorded to health.py
+    so the admin system-health view can report OCR success rate and
+    latency. Recording never raises — a metrics bug cannot break uploads.
+    """
+    import health
+
+    start = time.monotonic()
+    try:
+        result = _extract_structured_fields_impl(file_path, doc_type)
+    except Exception:
+        health.record_ocr(ok=False, latency_ms=(time.monotonic() - start) * 1000)
+        raise
+    health.record_ocr(ok=True, latency_ms=(time.monotonic() - start) * 1000)
+    return result
+
+
+def _extract_structured_fields_impl(file_path: str, doc_type: str) -> tuple[dict[str, str], float, str]:
+    """Internal implementation of extract_structured_fields (see wrapper
+    above for the metrics + docstring; this holds the actual pipeline).
     """
     if doc_type not in _DOC_TYPE_SCHEMAS:
         raise OcrEngineError(f"Unsupported document type: {doc_type}")
