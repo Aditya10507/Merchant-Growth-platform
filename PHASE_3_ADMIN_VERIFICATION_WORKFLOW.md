@@ -1,5 +1,13 @@
 # PHASE_3_ADMIN_VERIFICATION_WORKFLOW.md
 
+> ## ✅ STATUS: COMPLETED — HISTORICAL BUILD BRIEF (do not treat as current)
+>
+> This phase brief shipped in Sessions 10–13 (see `session_log.md`): admin-triggered verification (`POST /admin/merchants/{id}/verify`), non-short-circuiting `check_external_sources`, the `verified_matching`/`verified_mismatched` states, stored `matched_checks`/`mismatched_checks`/`rejection_cause`, and the three-state admin detail UI. Everything in it now exists in the codebase.
+>
+> ⚠️ **Its "Current system workflow" section (Section 1) describes the PRE-change state** (automatic background verification, short-circuiting checks) — that system no longer exists. Since Phase 3 shipped, later sessions added risk scoring + fraud rings + prompt-injection defense + chaos mode + calibration + concurrency-safe decisions + the system-health view (Sessions 14–22). The current architecture and status machine live in `KNOWLEDGE.md`, `docs/02_Architecture.md`, and `docs/adr/`.
+
+---
+
 **Read this file in full before writing any code.** Also read `KNOWLEDGE.md`, `AGENT_INSTRUCTIONS.md`, and `session_log.md`'s most recent entries first — this document extends all of them and does not override any non-negotiable rule already established (LLM never decides, no real PII, flat folder structure, etc.), except where explicitly noted in Section 3 below.
 
 ---

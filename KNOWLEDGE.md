@@ -4,87 +4,94 @@ This file exists so an AI coding agent (or a human joining later) can understand
 
 ## What this project is
 
-**Merchant Onboarding Copilot** — built for the Razorpay AI Buildathon 2026, Growth track. A merchant uploads PAN, GST, and bank-proof documents; each gets an instant format-validity check (OCR + pattern match) only. Once all 3 pass, the automated pipeline (LLM cross-check + 5 simulated external data sources) runs in the background and produces a **recommendation for an admin**, logged to the audit trail — it never applies directly to the merchant's account. **Every merchant, including ones the automation would recommend approving, requires an explicit admin decision before their account activates.** This is a deliberate design choice (changed from an earlier fully-automated version — see `session_log.md` for when/why) prioritizing a human-in-the-loop compliance pattern over full automation.
+**Merchant Onboarding Copilot** — built for the Razorpay AI Buildathon 2026 ("AI Risk Manager" track). A merchant signs up and uploads PAN, GST, and bank-proof documents. The system extracts typed fields (Groq vision), runs a deterministic verification pipeline (LLM cross-document consistency + 5 simulated external data sources + cross-merchant fraud-ring scan), computes a weighted **risk score (0–100)**, and presents the full structured breakdown to a **human admin who makes the mandatory final approve/reject decision**. Nothing ever activates a merchant without an explicit admin sign-off — a deliberate human-in-the-loop compliance design.
 
-Full requirements/design context lives in `docs/`:
-- `01_PRD.md` — problem, users, MVP scope, success metrics (note: written for the earlier fully-automated version; the mandatory-admin-decision gate described above supersedes its auto-approval framing — see `session_log.md` for the change)
-- `02_Architecture.md` — tech stack, functional requirements, business rules, validations, error handling (this is the SRS content, folded in — there is no separate SRS file by design)
-- `03_UIUX.md` — screens, states, design principles
-- `04_Development_Plan.md` — build phases and Definition of Done per phase
+The buildathon brief is "identify, assess, prioritize, or explain risk" — every feature maps to that: mismatch/fraud detection (identify), risk score (assess), risk-sorted queue (prioritize), audit trail + per-check breakdown (explain). Growth/marketing/payments features are off-track; reliability, explainability, and audit-trail work is always on-track.
 
-**Read those before making product/scope decisions**, but treat `session_log.md`'s most recent entries as the source of truth wherever they conflict with the original docs above. This file covers implementation-level context only.
+Full design context:
+- `docs/adr/` — **Architecture Decision Records (8)** — the "why" behind the key design calls (LLM never decides, sync OCR over queues, SQLite→Postgres, defer-on-partial-signals, vision-OCR swap, atomic decisions, …). Read these before changing a core design.
+- `docs/01_PRD.md`, `docs/02_Architecture.md`, `docs/03_UIUX.md` — product, architecture/SRS, UI/UX (kept current).
+- `session_log.md` — chronological record of every session and the source of truth when anything conflicts.
 
 ## Non-negotiable design decisions — do not casually change these
 
-1. **The LLM never makes the final approve/reject decision — verification is admin-triggered, never automatic.** `backend/verify.py` calls an LLM (Groq/OpenAI-compatible) and returns structured *findings* only. `backend/decision.py`'s `check_external_sources()` now checks **all 5** external sources unconditionally (no short-circuiting) and returns a structured `VerificationBreakdown` with matched/mismatched `CheckResult` entries. The LLM cross-check and external checks are triggered **on-demand** by an admin clicking "Verify with internal databases" (`POST /admin/merchants/{id}/verify`) — they do NOT run automatically when the 3rd document is uploaded. The only code path that can set `onboarding_status` to `"active"` or `"rejected"` is `admin.py`'s `decide_application()`, triggered by an explicit admin/reviewer action. If you're tempted to have the automated pipeline set a merchant's status directly, don't — this is intentional, not a bug.
+1. **The LLM never makes the final approve/reject decision — and verification is admin-triggered, never automatic.** `verify.py` calls Groq and returns structured *findings* only. `decision.py` is the deterministic authority. `verify_application()` (admin clicking "Verify with internal databases", `POST /admin/merchants/{id}/verify`) runs the LLM cross-check + all 5 external sources + fraud-ring scan on demand and stores a structured `matched_checks`/`mismatched_checks` breakdown. The only code path that sets `onboarding_status` to `"active"` or `"rejected"` is `decide_application()` (`POST /admin/merchants/{id}/decide`) — an explicit admin action. If you're tempted to have any automated path set a merchant's status directly, don't.
 
-2. **A merchant's status flow is: `pending` → `submitted` (all 3 docs format-valid) → admin triggers verify → `verified_matching` or `verified_mismatched` → admin decides → `active` or `rejected`.** After upload, the merchant sits at `"submitted"` until an admin clicks "Verify with internal databases." That runs the LLM cross-check + all 5 external sources and stores a structured breakdown (`matched_checks`/`mismatched_checks`) on the Merchant row. The status becomes `"verified_matching"` (all checks passed → one-click approve) or `"verified_mismatched"` (mismatches found → admin reviews the breakdown and can reject with the auto-generated `rejection_cause`). The merchant is never shown the automated system's technical reasoning directly; only a neutral "under review" message (before a decision) or a humanized reason (after an admin rejects, via `verify.humanize_reason()` or `verify.generate_rejection_cause()`).
+2. **A merchant's status machine is:** `pending` → `submitted` (all 3 docs format-valid → no auto-verification) → admin triggers verify → `verified_matching` (all checks passed → one-click approve) **or** `verified_mismatched` (mismatches found → admin reviews the breakdown, may edit the auto-drafted `rejection_cause`, then rejects) → admin decides → `active` or `rejected` → merchant can restart → `pending`. `is_test=True` means the merchant is an archived E2E/test-run account (excluded from the admin queue + batch-test scoring). `null` risk score means "not yet assessed" — never conflate it with `0`.
 
-3. **No real PII, ever.** All test data (PAN numbers, names, bank accounts) in `backend/seed.py` is synthetic and clearly fake-looking on purpose. Do not wire this project to real government/bank APIs — the 5 "external" tables (`govt_database`, `ckyc_records`, `automated_verification`, `bank_account_validation`, `compliance_reviews`) are simulated by design, per the PRD's explicit scope.
+3. **Defer, never determine on partial signals.** The LLM and the external sources are *required* signals. If either is unavailable (real outage, or the demo `llm_down`/`sources_down` chaos toggles), verify returns **503**, the merchant stays `submitted`, and a `verification_deferred` audit entry records why. Never score a merchant against silence. OCR extraction failures are different: they are merchant-facing and retry-friendly (`temporarily_unavailable` on the document), never a hard rejection.
 
-4. **Frontend UI is "Razorpay-inspired," not a clone.** `tailwind.config.js` uses a custom teal palette, deliberately not Razorpay's exact brand tokens/logo. Keep it that way — copying their exact branding is a trademark risk for a public submission.
+4. **No real PII, ever.** All test data in `backend/seed.py` is synthetic and clearly fake-looking on purpose. The 5 "external" tables (`govt_database`, `ckyc_records`, `automated_verification`, `bank_account_validation`, `compliance_reviews`) simulate third-party systems by design — do not wire real government/bank APIs.
 
-5. **Forgot-password is intentionally out of scope.** Auth only supports signup/login. Don't add password reset unless the user explicitly asks again.
+5. **Frontend UI is monochrome (black/white/gray) enterprise design**, deliberately not a Razorpay clone. `tailwind.config.js` declares "No custom colors." Keep it that way (teal branding was removed in an earlier session).
+
+6. **Forgot-password is intentionally out of scope.** Auth only supports signup/login.
+
+7. **Append-only audit trail + soft archiving.** Never hard-delete a merchant or document: archive with `is_test=True` / retire with `is_active=False` so history survives. Maintenance cleanups must never archive a real (non-test) account — the discriminator is "has an `expected_outcome` audit entry" (seeded ground truth) vs "created by an E2E run" (doesn't). This bit a real account once (Session 21b) — be careful with cleanup logic.
+
+8. **Admin decisions are single-winner state transitions** (ADR-008). `decide_application` updates via a conditional `UPDATE ... WHERE status IN ('verified_matching','verified_mismatched')` and 409s on a lost race. Don't "simplify" this back to a read-check-write.
 
 ## Backend structure (`backend/`, all files flat, no subfolders)
 
 | File | Responsibility |
 |---|---|
-| `config.py` | All settings/constants/thresholds. Never hardcode a value elsewhere — add it here. |
-| `db.py` | SQLAlchemy engine, session, and every ORM model (app tables + 5 mock external tables) |
-| `schemas.py` | Pydantic request/response contracts — separate from ORM models on purpose (SRP) |
-| `auth.py` | Password hashing (bcrypt via passlib), JWT issue/verify, signup/login routes, `get_current_merchant` and `require_role` dependencies |
-| `ocr.py` | PaddleOCR wrapper + per-document-type field parsing (PAN/GST/bank proof) |
-| `verify.py` | LLM API call (Groq/OpenAI-compatible) for cross-document consistency checking (strict, JSON-only prompt) |
-| `decision.py` | The deterministic decision engine + audit logging — the actual "brain" of the system |
-| `documents.py` | Upload/status endpoints; instant format check per document; once all 3 are format-valid, sets `onboarding_status = "submitted"` (Phase 3: the LLM/external checks have been moved to admin.py) |
-| `admin.py` | Reviewer/admin-only endpoints: merchant list/detail, `verify_application` (admin-triggered LLM + external checks), `decide_application` (the mandatory approve/reject sign-off — the only path to `"active"`), batch-test accuracy report |
-| `main.py` | FastAPI app wiring only (CORS, routers, startup) — no business logic belongs here |
-| `seed.py` | Populates the 5 mock tables + reviewer/admin accounts + 25 ground-truth-tagged test merchants |
+| `config.py` | All settings/constants/thresholds (risk weights, limits, URLs). Never hardcode a value elsewhere — add it here. |
+| `db.py` | SQLAlchemy engine, session, ORM models (app + 5 simulated external tables), `init_db`/`apply_migrations` startup safety nets (is_test column backfill + Alembic stamp/upgrade). |
+| `schemas.py` | Pydantic request/response contracts — separate from ORM models on purpose (SRP). |
+| `auth.py` | Password hashing (bcrypt via passlib), JWT issue/verify, signup/login, `get_current_merchant` and `require_role` dependencies. |
+| `ocr.py` | **Groq vision (qwen)** document-extraction wrapper — typed JSON fields per doc type, retries + backoff + multi-key rotation, PDF rasterization (pypdfium2), blank-image guard. Exposes `extract_structured_fields()`; callers never touch the provider. |
+| `verify.py` | LLM calls (Groq/OpenAI-compatible, same key as OCR): `cross_verify_documents` (strict JSON findings), `humanize_reason`, `generate_rejection_cause` — all rephrase-only, never decide/invent. |
+| `decision.py` | The deterministic Decision Engine: `check_external_sources` (all 5, no short-circuit), `check_shared_identifiers` (fraud-ring PAN + bank), `compute_risk_score` (single source of truth for scoring), per-document `evaluate` (OCR-confidence path). |
+| `documents.py` | Merchant upload/status endpoints; instant per-document format check; sync OCR with retry-friendly `temporarily_unavailable`; sets `submitted` when all 3 docs are valid; `merchant-status` returns docs **newest-first** (so a stale older upload can never shadow the latest one in the UI); restart-application. |
+| `admin.py` | Reviewer/admin endpoints: merchant list/detail, `verify_application`, `decide_application` (concurrency-safe), batch-test, maintenance archive, chaos-fault endpoints, risk-eval, system-health. |
+| `faults.py` | In-memory demo fault toggles (`ocr_down`, `llm_down`, `sources_down`) — process-local, reset on restart (ADR-007). |
+| `health.py` | In-memory sliding-window metrics (OCR/LLM success + latency, HTTP statuses) feeding the system-health view (ADR-007). |
+| `risk_eval.py` | Empirical risk-weight calibration: scores the 25 labeled seeded merchants under current weights (replays the real check engine), reports per-class stats + best-F1 cutoff + threshold sweep. |
+| `injection_guard.py` | Scans merchant-supplied document text for prompt-injection payloads before it reaches the LLM; redacts flagged values. |
+| `main.py` | FastAPI app wiring only (CORS, routers, request-metrics middleware, startup lifespan, test-dataset zip). |
+| `seed.py` | Seeds the 5 simulated tables, reviewer/admin demo accounts, and **25 ground-truth labeled merchants** (`expected_outcome` audit entries). |
+| `test_features.py` | **Offline E2E suite (54 checks)** via TestClient + throwaway SQLite — covers chaos faults, deferral, calibration, injection defense, concurrency, health. Run `python test_features.py` from `backend/`. |
 
-**Known constraint:** `passlib==1.7.4` requires `bcrypt==4.0.1` pinned exactly — newer bcrypt versions break passlib's backend detection and signup will crash with a cryptic error. This was hit and fixed during development; don't upgrade bcrypt without also upgrading passlib (or switching to calling `bcrypt` directly).
+**Known constraints:** `passlib==1.7.4` requires `bcrypt==4.0.1` pinned exactly (newer bcrypt breaks passlib). Groq's free tier is ~200K tokens/day **shared by OCR + LLM**; `LLM_FALLBACK_KEYS` from *other* Groq accounts rotate on 401/403/429 (same-account keys add nothing). Extraction requires a vision-capable model (`qwen/qwen3.8-27b` default; gpt-oss models are text-only on Groq).
 
 ## Frontend structure (`frontend/src/`)
 
 | File/folder | Responsibility |
 |---|---|
-| `types.ts` | Every shared TypeScript type. No `any` anywhere in this codebase — keep it that way. |
-| `constants.ts` | All config values (API URL, file limits, document slot definitions, labels) |
-| `api.ts` | The only file that calls `fetch`. Components never call the backend directly. |
-| `AuthContext.tsx` | Session state (JWT + merchant info) shared app-wide via React context |
-| `components/` | Reusable, memoized, accessible pieces: `Button`, `InputField`, `StatusBadge`, `Alert`, `DocumentSlot` |
-| `pages/AuthPage.tsx` | Signup/login toggle, client-side validation mirroring backend rules |
-| `pages/DashboardPage.tsx` | The 3 document slots, status polling (every 4s), account-activated state |
-| `App.tsx` | Routes between `AuthPage`/`DashboardPage` based on session — no router library needed for this linear MVP flow |
+| `types.ts` | Every shared TypeScript type (mirrors backend schemas incl. chaos/calibration/health payloads). No `any`. |
+| `constants.ts` | API URL, doc slot definitions, `STATUS_LABELS`, `ACTION_LABELS`, `RISK_LEVEL_THRESHOLDS`. |
+| `api.ts` | The only file that calls `fetch`. Typed functions per endpoint; components never call the backend directly. |
+| `AuthContext.tsx` | Session state (JWT + merchant info) via React context. |
+| `components/` | Memoized, accessible pieces: `Button`, `InputField`, `Alert`, `StatusBadge`, `DocumentSlot`, `Layout` (sidebar shell), `RiskBadge`, `RiskBreakdown`, `VerificationTimeline`. |
+| `pages/AuthPage.tsx` | Signup/login toggle with demo quick-fill accounts. |
+| `pages/DashboardPage.tsx` | Merchant dashboard: 3 document slots, status polling (4s), rejection/restart and activated states. |
+| `pages/AdminPage.tsx` | Admin/reviewer panel: status tabs + merchant table (risk badge, sort), detail panel with verify/decide actions + structured checks + audit trail, and admin-only cards: chaos panel, risk calibration, system health (15s auto-refresh), archive-test-merchants. |
+| `App.tsx` | Role-based routing: reviewer/admin → AdminPage, merchant → DashboardPage, no session → AuthPage. |
 
-**Client-side document-type validation is deliberately limited.** The frontend only checks file type/size before upload — actual document-type matching (e.g. catching an Aadhaar card uploaded to the PAN slot) requires OCR, which happens server-side in `documents.py`. The UI shows that result once the upload response comes back. Don't try to fake this check in the browser with something that isn't real OCR.
+**Client-side document-type validation is deliberately limited.** The frontend only checks file type/size before upload; real "is this actually a PAN?" validation requires OCR server-side. Don't fake it in the browser.
 
 ## How to verify things still work after a change
 
-Backend (no need to install the heavy `paddleocr`/`paddlepaddle` for basic checks):
 ```bash
-cd backend
-python -m py_compile *.py                    # syntax check
-python -c "from fastapi.testclient import TestClient; from main import app; ..."  # boot + endpoint check
+cd backend && python -m py_compile *.py        # syntax
+cd backend && python test_features.py           # offline E2E suite (no live server, no real API calls — LLM is patched)
+cd frontend && npm run typecheck && npm run build
 ```
 
-Frontend:
-```bash
-cd frontend
-npm run typecheck   # strict TypeScript, must pass with zero errors
-npm run build        # full production build
-```
+`test_features.py` is the fastest full-stack regression signal (auth → upload → verify → decide over the real FastAPI app on a throwaway DB). The live suite is `backend/test_e2e.py` (requires the deployed site + real Groq quota — use sparingly).
 
-## Known limitations (intentional, per MVP scope in the PRD)
+## Known limitations (intentional)
 
-- SQLite by default, not Postgres (swap `DATABASE_URL` in `.env` to change this — no code changes needed)
-- No password reset flow
-- No real government/CKYC/bank API integration — 5 tables are simulated
-- No websockets — dashboard polls every 4 seconds instead
-- `_best_guess_name_line()` in `ocr.py` is a simple heuristic; the LLM step is the authority on whether extracted data is trustworthy, not this parser
+- SQLite locally, Postgres in production — selected by `DATABASE_URL` alone (ADR-003).
+- No password reset, no websockets (dashboard polls every 4s).
+- OCR/LLM metrics and demo faults are process-local — they reset on restart and describe the live instance, not history (ADR-007).
+- Real government/CKYC/bank APIs are simulated by 5 seeded tables (by design).
+- Groq free-tier daily token quota can be exhausted by heavy testing — surfaces as retry-friendly `temporarily_unavailable`, resets daily.
 
 ## If extending this project
 
-- New document type → add to `config.SUPPORTED_DOCUMENT_TYPES`, add a parser function in `ocr.py`, add to `FIELD_PARSERS`, add a slot definition in `frontend/src/constants.ts`
-- New external verification source → add an ORM model in `db.py`, seed it in `seed.py`, add a check in `decision.check_external_sources()`
-- Changing the LLM prompt → edit `_SYSTEM_PROMPT` in `verify.py`; keep the "JSON only, never guess, no approval authority" rules intact
+- New document type → `config.SUPPORTED_DOCUMENT_TYPES`, the extraction schema map in `ocr.py`, a slot in `frontend/src/constants.ts`.
+- New external verification source → ORM model in `db.py`, seed in `seed.py`, check in `decision.check_external_sources()`.
+- New risk weight → `config.RISK_WEIGHTS` **and** the mirrored map in `frontend/src/components/RiskBreakdown.tsx` (no shared Python↔TS config — comment both).
+- Changing the LLM prompt → `_SYSTEM_PROMPT` in `verify.py`; keep "JSON only, never guess, no approval authority" intact.
+- New admin-only panel feature → admin-gated endpoint in `admin.py` + typed function in `api.ts` + card in `AdminPage.tsx`, and log the design call in `docs/adr/` if it's a real decision.

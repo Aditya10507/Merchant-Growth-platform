@@ -1,5 +1,13 @@
 # PHASE_2_IMPLEMENTATION_PLAN.md
 
+> ## ✅ STATUS: COMPLETED — HISTORICAL BUILD BRIEF (do not treat as current)
+>
+> This was a phase build brief written before the work existed. **All 5 features shipped** — instant `invalid_format` feedback, restart-application, LLM-humanized rejection reasons, the admin/reviewer panel, and the VerificationTimeline — in Sessions 5–9 (see `session_log.md`). It is kept as history; do not use it as an instruction file.
+>
+> ⚠️ **Superseded details (read the live code instead):** the endpoints in this brief evolved. `resolve_exception` (`/admin/exceptions/{id}/resolve`, acting on `flagged`) was replaced in Phase 3 by the admin-triggered **verify** + **decide** flow (`/admin/merchants/{id}/verify`, `/admin/merchants/{id}/decide`) with the `verified_matching`/`verified_mismatched` states. The current architecture, endpoints, and status machine live in `KNOWLEDGE.md`, `docs/02_Architecture.md`, and `docs/adr/`.
+
+---
+
 **Read this file in full before writing any code.** Also read `KNOWLEDGE.md` (project context) and `AGENT_INSTRUCTIONS.md` (coding standards) first — this document is additive to both and does not override any non-negotiable rule already listed there (LLM never makes the final decision, external verification tables stay simulated, flat folder structure, no forgot-password flow, etc.).
 
 This document specifies **exactly** what to build, with concrete code snippets where precision matters (schema fields, function signatures, status enums), so there is no ambiguity or drift from the existing codebase's patterns.

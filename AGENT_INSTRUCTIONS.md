@@ -2,7 +2,7 @@
 
 **Read this file in full before writing or modifying any code in this repository.** These rules are mandatory, not suggestions. If a change you're about to make conflicts with one of these rules, stop and flag it instead of silently deviating.
 
-For project context (what this app does, file responsibilities, non-negotiable design decisions), read `KNOWLEDGE.md` first. This file covers *how* to write code; `KNOWLEDGE.md` covers *what* the code does and *why*.
+For project context (what this app does, file responsibilities, non-negotiable design decisions), read `KNOWLEDGE.md` first. For the rationale behind the core architecture calls (why the LLM never decides, why OCR is synchronous, why state transitions are atomic, etc.), read the Architecture Decision Records in `docs/adr/`. This file covers *how* to write code; `KNOWLEDGE.md`/`docs/adr/` cover *what* the code does and *why*.
 
 ---
 
@@ -55,14 +55,16 @@ For project context (what this app does, file responsibilities, non-negotiable d
 
 ## 8. No mock implementations unless explicitly requested
 
-- Do not replace a real integration (PaddleOCR in `ocr.py`, LLM API in `verify.py`, bcrypt/JWT in `auth.py`) with a stub or mock without being explicitly asked to.
+- Do not replace a real integration (Groq vision extraction in `ocr.py`, the Groq LLM calls in `verify.py`, bcrypt/JWT in `auth.py`) with a stub or mock without being explicitly asked to. (Note: `ocr.py` and `verify.py` both use the same Groq API key — see `KNOWLEDGE.md` for the quota constraint and the multi-account fallback-key mechanism.)
+- The in-memory registries in `faults.py` (demo outage toggles) and `health.py` (metrics) are NOT mocks — they are deliberate, documented architecture (ADR-007). Don't "improve" them into database tables without reading that ADR.
 - The 5 external verification tables (`govt_database`, `ckyc_records`, `automated_verification`, `bank_account_validation`, `compliance_reviews`) are an intentional, explicitly-scoped exception — they simulate third-party systems this project cannot actually integrate with. Treat them as real database tables (they are), just populated with synthetic seed data.
 
 ## 9. Testing before you consider a change done
 
-- Backend: run `python -m py_compile *.py` from `backend/` to catch syntax errors, and exercise any new endpoint with `fastapi.testclient.TestClient` before calling the change complete.
+- Backend: run `python -m py_compile *.py` from `backend/` to catch syntax errors, then run the project's offline end-to-end suite `python test_features.py` from `backend/` (throws away its own SQLite DB; patches the LLM; makes no real API calls) before calling the change complete. New backend features should add checks there, following its existing sections.
 - Frontend: run `npm run typecheck` (must pass with zero errors) and `npm run build` from `frontend/` before calling the change complete.
 - If you change `backend/db.py`, regenerate `backend/schema.sql` to keep it in sync (see the generation snippet in `backend/schema.sql`'s header comment, or re-run the `CreateTable`/`CreateIndex` compilation against the SQLAlchemy metadata).
+- If a change touches a core design decision (LLM authority, deferral semantics, state transitions, engine choice, demo-state architecture), update the matching record in `docs/adr/` and note it in `session_log.md` — keeping the docs current is a project convention, not an afterthought.
 
 ## 10. When a request conflicts with these rules
 

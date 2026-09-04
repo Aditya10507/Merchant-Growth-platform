@@ -2,7 +2,7 @@
 
 > **Automated KYC verification pipeline for merchant onboarding** — built for the Razorpay AI Buildathon 2026 (Growth Track).
 
-A merchant signs up, uploads PAN / GST / bank-proof documents, and the system **automatically extracts, cross-verifies, and validates** those documents against 5 simulated external data sources — approving, flagging, or rejecting the merchant without manual review for clean-path cases.
+A merchant signs up, uploads PAN / GST / bank-proof documents, and the system **extracts, cross-verifies, and validates** them against 5 simulated external data sources plus a cross-merchant fraud-ring scan. It produces a structured, weighted risk score and a full audit trail — and a **human admin makes the mandatory final approve/reject decision**. No merchant is ever activated by automation alone (a deliberate human-in-the-loop compliance design).
 
 ---
 
@@ -270,6 +270,7 @@ docker-compose up --build
 | `/admin/merchants/:id/verify` | POST | Admin | Run verification pipeline |
 | `/admin/merchants/:id/decide` | POST | Admin | Approve or reject merchant |
 | `/admin/batch-test` | POST | Admin | Accuracy report (seeded ground-truth records) |
+| `/admin/maintenance/clear-test-merchants` | POST | Admin | Archive E2E/test-run merchants from queue + report |
 | `/admin/faults` | GET | Admin | Failure-injection toggle state (chaos panel) |
 | `/admin/faults/:name` | PUT | Admin | Enable/disable one demo fault (`ocr_down`, `llm_down`, `sources_down`) |
 | `/admin/faults/reset` | POST | Admin | Clear every demo fault |

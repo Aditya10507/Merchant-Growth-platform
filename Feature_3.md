@@ -1,4 +1,12 @@
-# FEATURE_1_RISK_SCORE_AND_EXPLAINABILITY.md
+# Feature brief — Weighted risk score & explainability
+
+> ## ✅ STATUS: IMPLEMENTED — HISTORICAL BUILD BRIEF (do not treat as current)
+>
+> This feature brief shipped in Sessions 10–14 (see `session_log.md`): `RISK_WEIGHTS`/`MAX_RISK_SCORE` in `config.py`, the nullable `Merchant.risk_score` column, `sort_by_risk` on the merchant list, and the `RiskBadge`/`RiskBreakdown` frontend components — all live in the codebase today.
+>
+> ⚠️ **Later sessions extended the weights**: `fraud_ring_pan` (40) and `fraud_ring_bank` (40) were added with fraud-ring detection, and `prompt_injection_suspected` (40) with the injection defense. Scoring is centralized in `decision.compute_risk_score` (used by both admin verify and the `risk_eval.py` calibration). Current weights live in `backend/config.py` (`RISK_WEIGHTS`); current architecture in `KNOWLEDGE.md` and `docs/adr/`.
+>
+> (Note: this file is named `Feature_3.md` but briefs the risk-score feature — an early-session numbering quirk kept for history.)
 
 **Read `KNOWLEDGE.md`, `AGENT_INSTRUCTIONS.md`, and `session_log.md` (all sessions) in full before starting.** This feature builds directly on the Phase 3 admin-verification work already in the repo (`admin.py`'s `verify_application`, `decision.py`'s `check_external_sources`, the `CheckResult`/`VerificationBreakdown` schemas). Do not duplicate that logic — extend it.
 

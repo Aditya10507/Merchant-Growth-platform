@@ -1972,4 +1972,29 @@ User reported that logging into their account (adityaws10507@gmail.com, merchant
 
 ---
 
+## Session 22b — Documentation pass: all docs brought current with the shipped system (September 4, 2026)
+
+### What happened
+User asked to update every document to the current architecture, features, and data flow. Audit found most docs described systems that no longer exist (PaddleOCR/Claude stack, automatic background verification, short-circuiting checks, teal UI, `/admin/exceptions` endpoints, 50-record framing) or were build briefs predating their own implementation.
+
+### Changes
+| Doc | Change |
+|---|---|
+| `KNOWLEDGE.md` | Full rewrite to current state: Groq vision OCR, admin-triggered verify/decide status machine, deferral semantics, monochrome UI, module table incl. faults/health/risk_eval/injection_guard, test_features.py (54 checks) as the offline suite, docs/adr as design authority |
+| `docs/02_Architecture.md` | Full rewrite (v2.0): current stack, components, 3-stage data flow, real endpoint table, roles, FRs, business rules (weights, deferral, injection), error table, security, health view, deployment |
+| `docs/01_PRD.md` | Rewrite (v2.0): AI Risk Manager framing, human-in-the-loop, shipped feature list, measured metrics (clean 0 / flagged 95, F1 1.0, 0 false approvals), risks incl. prompt injection + concurrency, acceptance criteria checked against current system |
+| `docs/03_UIUX.md` | Rewrite (v2.0): monochrome enterprise design, role-based shell, dashboard states incl. temporarily_unavailable, AdminPage queue + detail + 3 admin cards (chaos/calibration/health) |
+| `docs/04_Development_Plan.md` | Banner: all phases complete + post-plan additions list |
+| `PHASE_2_IMPLEMENTATION_PLAN.md` | Banner: COMPLETED; superseded endpoints (resolve_exception → verify/decide) flagged |
+| `PHASE_3_ADMIN_VERIFICATION_WORKFLOW.md` | Banner: COMPLETED; its "current workflow" section is the pre-change state — flagged as historical |
+| `Feature_3.md` | Banner: IMPLEMENTED; renamed title to match content; notes later weight additions + centralized compute_risk_score |
+| `AGENT_INSTRUCTIONS.md` | Fixed stale refs (Groq not PaddleOCR/Claude, faults/health are deliberate not mocks, test_features.py + docs/adr convention) |
+| `README.md` | Intro de-staled (no auto-approval), added missing `/admin/maintenance/clear-test-merchants` endpoint row |
+
+### Notes
+- Reports (`REPORT_E2E_LIVE_*.md`) intentionally left untouched — they are point-in-time test artifacts, not living docs.
+- Flagged for the future (not changed here): `db.py`'s startup backfill re-marks merchants *without* an `expected_outcome` audit entry as `is_test=True` on every boot — the same rule that archived a real account in Session 21b. Worth making the archive discriminator stricter or the backfill one-shot.
+
+---
+
 *New sessions will be appended below.*

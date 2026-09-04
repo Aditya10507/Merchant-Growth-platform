@@ -1,10 +1,16 @@
 # Development Plan
 ## Merchant Onboarding Copilot
-**Version:** 1.0
+**Version:** 2.0 — all original phases shipped (see status note below)
+
+> ## ✅ STATUS: ALL PHASES COMPLETE
+>
+> Phases 0–7 below (setup → DB → backend core → frontend core → integration → testing → polish → deploy) are **done**. The plan was written when OCR meant PaddleOCR and the LLM meant Claude; the shipped stack uses **Groq vision (qwen) for extraction** and the **same Groq key for LLM verification** (swap documented in `docs/adr/006`), with a mandatory human sign-off (Phase 3 workflow) and no automatic approval path.
+>
+> **Post-plan additions (Sessions 10–22, see `session_log.md`):** weighted risk scoring + fraud-ring detection, admin-triggered verify/decide states, risk-sorted queue, prompt-injection defense, failure-injection chaos panel, empirical risk-weight calibration, concurrency-safe decisions, live system-health view, test-merchant archiving, and 8 Architecture Decision Records in `docs/adr/`. The current authoritative references are `KNOWLEDGE.md` and `docs/02_Architecture.md`.
 
 ---
 
-## 1. Roadmap Overview
+## 1. Roadmap Overview (as originally planned)
 
 Built to be executable without guessing — each phase has a clear priority, dependency, and Definition of Done (DoD).
 

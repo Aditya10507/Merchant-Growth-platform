@@ -1,90 +1,76 @@
 # UI/UX Document
 ## Merchant Onboarding Copilot
-**Version:** 1.0 (lean, implementation-ready)
+**Version:** 2.0 (kept current — shipped monochrome enterprise interface)
 
 ---
 
 ## 1. Design Principles
 
-- **Clarity over decoration** — merchants should always know what's happening and why
-- **Fast feedback** — validate at the point of action (e.g., wrong document type flagged instantly)
-- **Razorpay-inspired, not cloned** — use a similar clean, card-based, teal/blue palette and typography feel without copying logos or exact layouts
-- **Transparency** — every rejection/flag shows a plain-language reason, never a silent failure
+- **Clarity over decoration** — merchants and admins always know what's happening and why
+- **Fast feedback** — validate at the point of action (instant upload results, instant verify/decide responses)
+- **Monochrome enterprise aesthetic** — strictly Tailwind's black/white/gray scale (deliberately not a brand clone; removed the earlier teal palette)
+- **Transparency** — every rejection/flag/deferral shows a plain-language reason; admins see the full structured breakdown behind every score
+- **Accessibility** — status never conveyed by color alone; every control keyboard-navigable with visible labels
 
-## 2. User Journey
+## 2. App Shell
 
-1. Merchant lands on signup page → creates account
-2. Redirected to onboarding dashboard → sees 3 empty document slots (PAN, GST, Bank Proof)
-3. Uploads each document → gets instant client-side feedback (valid type / wrong type)
-4. Submits → sees a "verifying" status per document
-5. Backend processes → dashboard updates to Approved / Flagged / Rejected per document
-6. Once all 3 are approved → merchant sees "Account activated" screen with next steps
-7. If flagged → merchant sees a plain-language reason and a "re-upload" or "contact support" option
+- Three top-level views routed by session role (`App.tsx`): **AuthPage** (no session) → merchant **DashboardPage** / reviewer-or-admin **AdminPage**.
+- All authenticated screens sit inside `Layout.tsx` (sidebar shell).
 
 ## 3. Screens
 
-| Screen | Purpose |
-|---|---|
-| Signup / Login | Account creation and access |
-| Onboarding Dashboard | Central hub — 3 document slots with status |
-| Document Upload Modal | Upload + instant type validation |
-| Verification Status | Per-document detail: extracted fields, confidence, decision reason |
-| Account Activated | Success state, entry point to "merchant home" |
-| Exception/Flagged View | Shown when a document needs review or re-upload |
-| Reviewer Panel (internal) | List of flagged merchants with reasons (separate role) |
-| Batch Test Report (internal/demo) | Shows accuracy metrics for judges/demo |
+| Screen | Who | Purpose |
+|---|---|---|
+| AuthPage | everyone | Signup/login; demo quick-fill buttons for merchant / reviewer / admin accounts |
+| DashboardPage | merchant | The 3 document slots (PAN, GST, Bank Proof), live status polling (4s), active/rejected states |
+| AdminPage | reviewer/admin | Review queue + detail panel + admin-only engineering cards |
 
-## 4. Navigation
+## 4. Merchant Dashboard
 
-- Simple top nav: Logo | Dashboard | Support | Account menu
-- No deep navigation tree needed — MVP is a linear flow (upload → verify → activate)
-- Reviewer panel is a separate route (`/reviewer`), gated by role
+- Three upload slots, one per document type; each shows its per-document state: empty → uploading/`verifying` → `approved`/`invalid_format` (retry) / `temporarily_unavailable` (try again in a moment) / `rejected`.
+- Instant feedback on upload response: a success/valid alert on clean extraction, a clear "invalid document — please check and try again" alert on `invalid_format`, and a retry-friendly message on `temporarily_unavailable`.
+- Once all 3 documents are valid the merchant reaches `submitted` and sees a neutral "under review" state — **no internal check details are ever shown to the merchant**.
+- `rejected`: the upload grid hides, the plain-language `rejection_reason` shows, and a **"Start a new application"** button restarts the flow (old documents retired, not deleted).
+- `active`: success/activated banner, upload grid hidden.
 
-## 5. Core Components
+## 5. Admin/Reviewer Panel (AdminPage)
 
-- **Document upload card** — icon, slot label (e.g., "PAN Card"), drag-and-drop or click-to-upload, status badge (empty / uploaded / verifying / approved / flagged)
-- **Status badge** — color-coded pill: gray (empty), blue (verifying), green (approved), amber (flagged), red (rejected)
-- **Reason panel** — expandable section showing plain-language explanation + extracted fields
-- **Progress stepper** — shows overall onboarding progress (3 steps: Upload → Verify → Activate)
-- **Toast/inline alerts** — for instant client-side validation errors
+### 5.1 Review queue
+- Status filter tabs: All / pending / submitted / verified_matching / verified_mismatched / active / rejected.
+- Merchant table: business, status badge, **risk badge**, submitted date; rows open the detail panel. Queue supports **sort by risk** so the riskiest applications surface first.
+- Admin-only controls beside the tabs: **"Archive test merchants"** (maintenance, with a result alert).
 
-## 6. Forms
+### 5.2 Detail panel (side panel)
+- Merchant identity + status + risk badge; documents with extracted fields and OCR confidence.
+- **submitted** → "Verify with internal databases" button (runs LLM + 5 sources + fraud scan; on deferral shows the 503 message and the merchant stays submitted).
+- **verified_matching** → matched-checks list + one-click **"Approve & activate account"**.
+- **verified_mismatched** → passed-checks list, failed-checks list (fraud-ring and prompt-injection findings visually highlighted), risk-score breakdown (points per check), editable rejection message pre-filled from the auto-drafted cause, **"Reject & notify merchant"**.
+- Audit trail rendered as a timeline of labeled actions with reasons and timestamps.
 
-- Signup: email, password, business name (minimal fields for MVP)
-- Document upload: file picker per slot, accepts JPG/PNG/PDF, 5MB max, inline error if wrong format/size
+### 5.3 Admin-only engineering cards (grid above the queue — reviewers never see them)
+- **Chaos panel (failure-injection)** — three toggle switches (`ocr_down`, `llm_down`, `sources_down`) with one-line hints; an active-fault banner and "Clear all faults" panic button.
+- **Risk-weight calibration** — "Run calibration" → report: labeled counts, clean vs flagged mean scores, best-F1 cutoff + confusion numbers, collapsible full cutoff sweep table, "Run again".
+- **System health** — auto-refreshing (15s) card: OCR success rate + avg/p95 latency, LLM success rate + latency, HTTP request total + 5xx count, uptime, and an active-faults badge cross-linked to the chaos panel.
 
-## 7. Loading / Error / Empty States
+## 6. States
 
 | State | Behavior |
 |---|---|
-| Empty | Document slot shows placeholder icon + "Upload your PAN card" prompt |
-| Loading (client-side check) | Small spinner on the upload card while type check runs |
-| Loading (backend verification) | "Verifying..." badge with subtle pulse animation |
-| Error (wrong doc type) | Immediate inline red message: "This looks like an Aadhaar card. Please upload your PAN card." |
-| Error (backend/API failure) | "Something went wrong — we're retrying" with auto-retry, then manual review fallback message |
-| Flagged | Amber badge + plain-language reason + "Re-upload" button |
-| Success | Green badge + checkmark, all 3 slots green triggers "Account Activated" screen |
+| Loading | Table/card-level status text ("Loading merchants…") — never blank |
+| Empty | "No merchants found for this filter"; empty check lists render as italic "No …" notes |
+| Error | Inline `Alert variant="error"` with the API's detail message + retry where sensible |
+| Success | Green/gray success alerts after decisions and maintenance actions |
 
-## 8. Responsive Behavior
+All async flows follow the shared `AsyncState<T>` pattern (idle/loading/success/error) — no ad-hoc boolean flags.
 
-- Desktop: 3 document slots shown side-by-side in a row
-- Tablet: 2 per row, wrapping
-- Mobile: single column, one slot per row, sticky "Submit" button at bottom
+## 7. Responsive Behavior
 
-## 9. Accessibility
+- Admin queue + detail panel sit side by side on wide screens (fixed-width detail column); the admin engineering cards stack 2-up on large screens, 1-up below; tables scroll rather than squeeze on narrow viewports.
+- Dashboard slots: 3-up on desktop, wrapping to 1-up on mobile.
 
-- All status badges paired with text labels, not color alone
-- Form fields have visible labels (not placeholder-only)
-- Sufficient contrast for status colors (use darker shade of each color for text on colored backgrounds)
-- Keyboard-navigable upload controls and buttons
+## 8. Accessibility & Interaction Notes
 
-## 10. Typography & Colors
-
-- **Typography:** clean sans-serif (e.g., Inter or system-ui), single weight scale (regular/medium), sentence case for all labels
-- **Colors:** teal/blue primary (Razorpay-inspired), neutral grays for structure, semantic colors for status (green = approved, amber = flagged, red = rejected, blue = in progress)
-- **Spacing:** consistent 8px base spacing unit; cards use generous padding (16–24px) to avoid a cramped, dense look
-
-## 11. Interaction Notes
-
-- Uploading a document triggers immediate client-side check before any backend call — this is the single most "wow" interaction for the demo, so it should feel instant
-- Status transitions (verifying → approved/flagged) should update live if possible (polling every few seconds is sufficient for MVP; no need for websockets)
+- StatusBadge pairs color with text; RiskBadge shows the numeric score + a level label ("Low risk" etc.).
+- Toggle switches are real `role="switch"` buttons with `aria-checked`; tabs use `aria-pressed`.
+- Keyboard-navigable tables/buttons; visible focus states throughout.
+- Components are memoized; the dashboard polls at 4s and the health card at 15s — deliberate balances between liveness and load.

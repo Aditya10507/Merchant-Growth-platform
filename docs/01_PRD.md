@@ -1,110 +1,101 @@
 # Product Requirements Document (PRD)
 ## Merchant Onboarding Copilot
-**Track:** Growth | Razorpay AI Buildathon 2026
-**Version:** 1.0
+**Track:** AI Risk Manager | Razorpay AI Buildathon 2026
+**Version:** 2.0 (updated 2026-09-04 to the shipped system — see `session_log.md` for history)
 
 ---
 
 ## 1. Problem Statement
 
-Merchant onboarding on payment platforms today is slow and error-prone because KYC documents (PAN, GST certificate, bank proof) are manually reviewed by human ops teams or checked with brittle rule-based systems. This causes:
+Merchant onboarding on payment platforms is slow and error-prone because KYC documents are manually reviewed or checked with brittle rules. Worse, when automation *is* used, it is usually a black box: the merchant (or the platform) can't say *why* an application was flagged, how risky it is relative to others, or which signals drove the outcome.
 
-- Long onboarding turnaround time (days instead of minutes)
-- Inconsistent verification quality (human fatigue, missed mismatches)
-- Poor merchant experience — no real-time feedback on document errors
-- High operational cost for the platform (manual review teams)
-
-**Core problem:** There is no fast, accurate, self-explainable way to verify a merchant's identity documents at submission time and cross-check them against internal and external records — without waiting on a human reviewer for every case.
+**Core problem:** there is no fast, accurate, *self-explainable* way to verify a merchant's identity documents at submission time — one that identifies risk (mismatched documents, shared identifiers across applicants), assesses it (a weighted, explainable risk score), prioritizes it (a risk-sorted review queue), and explains it (a full audit trail and per-check breakdown) — while keeping a human in the loop for the final decision.
 
 ## 2. Target Users
 
 | User | Description | Needs |
 |---|---|---|
-| **Merchant (primary)** | A business owner signing up to accept payments | Fast, transparent onboarding; clear errors if something's wrong |
-| **Compliance/Ops reviewer (secondary)** | Internal team member who handles exceptions | Only wants to see flagged, high-risk cases — not every submission |
-| **Platform (Razorpay, in this simulation)** | The business running onboarding | Wants high verification accuracy, full audit trail, low manual load |
+| **Merchant (primary)** | A business owner signing up to accept payments | Fast, transparent onboarding; clear errors; plain-language rejection reasons |
+| **Compliance/ops reviewer + admin** | Internal team handling verification | Risk-prioritized queue, full structured breakdown, one-click sign-off, confidence in the automation |
+| **Platform (Razorpay, in this simulation)** | The business running onboarding | Measured accuracy, audit trail, defense against fraud (shared identifiers) and AI attacks (prompt injection), failure recovery |
 
 ## 3. Goals
 
-1. Automatically verify merchant-submitted KYC documents with high accuracy.
-2. Reduce onboarding time from days to minutes for the majority of clean submissions.
-3. Catch document-type errors (e.g., Aadhaar submitted in the PAN slot) before they even reach backend processing.
-4. Provide a transparent, auditable reason for every approval or rejection.
-5. Demonstrate a realistic, extensible verification pipeline (OCR → LLM → external checks) that mirrors how a real fintech platform would automate onboarding.
+1. Automatically **extract** KYC document fields with high accuracy (vision OCR) and instantly validate document format.
+2. **Identify risk**: cross-document inconsistencies, failures against 5 external verification sources, and identifiers shared across unrelated applications (fraud rings).
+3. **Assess risk**: a weighted, explainable 0–100 score per merchant.
+4. **Prioritize risk**: a review queue sorted by risk so the riskiest applications surface first.
+5. **Explain every outcome**: structured per-check breakdown + immutable audit trail + plain-language merchant messages.
+6. Keep a **human admin as the mandatory final decision-maker** (compliance-grade human-in-the-loop).
+7. Prove the system works: batch accuracy, empirical weight calibration, live failure-injection demos, and a live system-health view.
 
-## 4. Core Features (MVP)
+## 4. Core Features (shipped)
 
-1. **Merchant signup/login** (simplified auth flow)
-2. **Document upload with slot-specific validation** (PAN slot, GST slot, Bank proof slot)
-3. **Client-side document-type pre-check** — reject obviously wrong document types at upload time
-4. **OCR extraction** — extract text fields from uploaded documents into structured JSON
-5. **LLM cross-verification** — check consistency of extracted fields (name match across docs, valid formats, etc.) using a strict, low-hallucination prompt
-6. **Simulated external verification** — check extracted data against 5 mock "external" data sources (government DB, CKYC, automated verification, bank validation, compliance review)
-7. **Decision engine** — deterministic rules combine LLM output + external checks to approve, reject, or flag for manual review
-8. **Merchant dashboard** — shows document status, verification progress, and final approval
-9. **Audit trail** — every decision is logged with the reason
+1. **Merchant signup/login** (role-based: merchant / reviewer / admin)
+2. **Document upload with instant feedback** — PAN/GST/Bank-proof slots; synchronous vision-OCR extraction; per-document states incl. `invalid_format` (retry) and `temporarily_unavailable` (outage)
+3. **LLM cross-document verification** — strict, structured findings only (never a verdict)
+4. **5-source simulated external validation** + **cross-merchant fraud-ring detection**
+5. **Weighted explainable risk score (0–100)** with per-check point breakdown
+6. **Admin-triggered verification + mandatory human sign-off** — `verified_matching` / `verified_mismatched` states, one-click approve, editable rejection cause
+7. **Prompt-injection defense** — hostile document text can't corrupt the AI check
+8. **Merchant dashboard** — real-time status polling, plain-language reasons, restart after rejection
+9. **Audit trail** — append-only, every event logged with reason and actor
+10. **Engineering showcases** — batch accuracy report, risk-weight calibration, failure-injection chaos panel, live system-health view, Architecture Decision Records (`docs/adr/`)
 
-## 5. MVP Scope
+## 5. Scope
 
-**In scope:**
-- 3 document types: PAN card, GST certificate, Bank proof (cancelled cheque/statement)
-- Synthetic/sample documents only (no real PII)
-- End-to-end flow from upload to account activation
-- A batch-test mode to run ~50 synthetic records and report accuracy metrics
+**In scope:** the 3 document types; synthetic data only; end-to-end upload → verify → decide; batch accuracy over the **25 seeded ground-truth merchants**; admin/reviewer panel with risk prioritization.
 
-**Explicitly minimal:**
-- Auth is simple (email/password or mock OTP) — not building a full identity/security system
-- Only one merchant type/flow — no multi-business-entity variations initially
+**Explicitly minimal / out of scope:** real government/bank API integration (simulated by design); forgot-password; websockets; video KYC; multi-language; mobile app; real payments/checkout integrations (different buildathon track); production-grade security hardening beyond what's listed.
 
 ## 6. User Stories
 
-1. *As a merchant*, I want to upload my PAN card in the right slot so that I don't waste time submitting the wrong document.
-2. *As a merchant*, I want to know immediately if my document is unreadable or invalid, so I can re-upload without waiting.
-3. *As a merchant*, I want to see the status of my verification (in progress, approved, flagged) so I know what to expect.
-4. *As a compliance reviewer*, I want to see only the flagged/exception cases with a clear reason, so I don't have to check every submission manually.
-5. *As a platform owner*, I want a report showing what % of submissions were auto-approved correctly, so I can trust the automation.
+1. *As a merchant*, I want to know immediately if my document is unreadable or in the wrong slot, so I can fix it without waiting.
+2. *As a merchant*, I want to see my onboarding status live and get a plain-language reason if I'm rejected, so I know exactly what to do.
+3. *As a reviewer*, I want a risk-prioritized queue with the full per-check breakdown, so I only spend attention where it matters.
+4. *As an admin*, I want to verify an application on demand and sign off with one click, so clean merchants activate fast and risky ones never slip through.
+5. *As a platform owner*, I want a measured accuracy report and weight calibration, so I can trust and tune the automation.
+6. *As an operator*, I want to see the system's health (OCR/LLM success, latencies, errors) and simulate an outage, so I can prove it fails safe.
 
-## 7. Success Metrics
+## 7. Success Metrics (measured)
 
-| Metric | Target for demo |
-|---|---|
-| Correct auto-approval rate | ≥ 90% on synthetic batch of 50 records |
-| Correct exception-flagging rate | ≥ 90% (mismatches/invalid docs correctly caught) |
-| False approval rate (bad doc approved) | 0% — highest priority, since this is the riskiest failure mode |
-| Avg. time from upload to decision | < 30 seconds per merchant (excluding external DB response is mocked, so effectively instant) |
-| Wrong-document-type catch rate at upload | 100% for the demo dataset |
+| Metric | Target | Measured (synthetic set) |
+|---|---|---|
+| Correct extraction of identifiers | ~100% | 3/3 exact @ conf 0.95 (live runs) |
+| Clean merchants separated from flagged by risk score | strong separation | clean mean **0.0** vs flagged mean **95.0** |
+| Best-F1 decision cutoff | high | **F1 = 1.0** at cutoff ≥ 5 (25 labeled merchants) |
+| False-approval rate | 0% | **0 false approvals** in batch test |
+| Batch-test accuracy | ≥ 90% | **100%** on scorable records (Session 17+) |
+| Wrong/blank document caught at upload | 100% | `invalid_format` path |
+| Verification latency | seconds | ~1.5 s uploads; ~16 s full verify incl. LLM |
+| Double-processing under race | 0 | exactly one decision + one audit entry (tested) |
 
 ## 8. Assumptions
 
-- All test documents are synthetic; no real government or banking API access is used or needed.
-- The 5 "external" verification sources are simulated as internal database tables seeded with test data.
-- The LLM used for cross-verification (Claude) is called via API with strict, constrained prompts — it proposes findings, it does not make the final approve/reject decision.
-- Judges will evaluate based on measured accuracy + audit trail quality, not on live integration with real government systems.
+- All test documents are synthetic; no real government/bank API access is used or needed.
+- The 5 "external" sources are simulated as seeded database tables.
+- One LLM provider (Groq, free tier) powers extraction + verification; quota is shared, so heavy testing can temporarily exhaust it (surfaces as retry-friendly `temporarily_unavailable`, resets daily).
+- Judges evaluate on measured accuracy, audit-trail quality, explainability, and failure recovery — not live integration with real government systems.
 
-## 9. Risks
+## 9. Risks & Mitigations
 
 | Risk | Mitigation |
 |---|---|
-| LLM hallucinates a "match" that isn't real | LLM only outputs structured findings; a deterministic rule layer makes the final call, not the LLM directly |
-| OCR misreads low-quality document images | Confidence thresholds — low-confidence extractions are auto-flagged for review, not auto-approved |
-| Scope creep (trying to cover every document type/edge case) | MVP fixed to 3 document types and one merchant flow |
-| Time constraint of buildathon | Feature list kept minimal; polish only what's demoed |
+| LLM hallucinates a "match" | LLM only outputs structured findings; deterministic engine decides (ADR-001) |
+| LLM/provider outage silently changes outcomes | Verification defers (503); no determination on partial signals (ADR-005) |
+| Prompt injection via uploaded documents | Pre-LLM scan + redaction + forced human review (Session 21) |
+| Fraud across applications | Cross-merchant shared-identifier scan |
+| OCR engine unreliable | Vision-OCR swap; retries; multi-key rotation (ADR-006) |
+| Double decisions / lost updates | Atomic conditional-UPDATE transitions (ADR-008) |
+| Cleanup destroys evidence or bites real accounts | Soft archive only; account discriminator; Session 21b lesson (ADR-004) |
+| Stale failed upload shadows a new one | `merchant-status` newest-first (Session 21b) |
 
-## 10. Out of Scope (for MVP)
+## 10. Acceptance Criteria (current system)
 
-- Real integration with actual government/CKYC/bank APIs
-- Multi-language document support
-- Video KYC
-- Multi-user roles beyond merchant + reviewer
-- Mobile app (web only)
-- Production-grade security hardening (rate limiting, WAF, etc. — noted in architecture doc but not built for demo)
-
-## 11. Acceptance Criteria
-
-- [ ] A merchant can sign up, upload 3 required documents, and receive a decision without manual intervention (for clean cases)
-- [ ] Uploading a wrong document type in a slot is rejected before backend processing, with a clear error message
-- [ ] OCR output is converted into a structured JSON object per document
-- [ ] LLM cross-verification produces a structured finding (not just free text) including a confidence score and reasoning
-- [ ] At least one submission with a deliberate mismatch is correctly flagged, not approved
-- [ ] A batch test of 50 synthetic records produces a report with accuracy, false-approval rate, and exception list
-- [ ] Every decision (approve/reject/flag) has a logged, human-readable reason
+- [x] Merchant signs up, uploads 3 documents, gets instant per-document feedback, reaches `submitted` with **no** automatic verification.
+- [x] Admin verifies on demand → structured matched/mismatched breakdown + risk score; merchant → `verified_matching`/`verified_mismatched`.
+- [x] Admin's sign-off is the only path to `active`/`rejected`; rejecting can use the auto-drafted cause; merchant sees a plain-language reason.
+- [x] Deliberate mismatches are flagged, never approved; fraud-ring shared identifiers are caught.
+- [x] Batch test over the 25 seeded records reports accuracy + false approvals; risk calibration reports score separation + cutoff sweep.
+- [x] Chaos toggles produce real degradation paths; deferral on LLM/source outage; recovery on clear.
+- [x] Every event has an audit-log entry with a reason; two concurrent decisions produce exactly one.
